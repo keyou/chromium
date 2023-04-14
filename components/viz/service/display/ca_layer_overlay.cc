@@ -21,6 +21,9 @@
 #include "ui/base/cocoa/remote_layer_api.h"
 #include "ui/gfx/buffer_types.h"
 
+#include "base/trace_event/trace_event.h"
+#include "base/trace_event/traced_value.h"
+
 namespace viz {
 
 namespace {
@@ -249,6 +252,7 @@ class CALayerOverlayProcessorInternal {
       bool* skip,
       bool* render_pass_draw_quad,
       int& yuv_draw_quad_count) {
+    TRACE_EVENT0("viz", "CALayerOverlayProcessorInternal::FromDrawQuadKY");
     if (quad->shared_quad_state->blend_mode != SkBlendMode::kSrcOver)
       return gfx::kCALayerFailedQuadBlendMode;
 
@@ -267,6 +271,14 @@ class CALayerOverlayProcessorInternal {
     if (quad->shared_quad_state->mask_filter_info.HasRoundedCorners()) {
       if (quad->shared_quad_state->mask_filter_info.rounded_corner_bounds()
               .GetType() > gfx::RRectF::Type::kSingle) {
+        TRACE_EVENT2(
+            "viz",
+            "quad->shared_quad_state->mask_filter_info.rounded_corner_"
+            "bounds().GetType() > kSingleKY",
+            "type",
+            quad->shared_quad_state->mask_filter_info.rounded_corner_bounds()
+                .GetType(),
+            "kSingle", gfx::RRectF::Type::kSingle);
         return gfx::kCALayerFailedQuadRoundedCornerNotUniform;
       }
     }
@@ -515,10 +527,16 @@ bool CALayerOverlayProcessor::ProcessForCALayerOverlays(
   int render_pass_draw_quad_count = 0;
   int yuv_draw_quad_count = 0;
   CALayerOverlayProcessorInternal processor;
+  TRACE_EVENT1("viz", "foreach:CA:quad_listKY", "size", quad_list.size());
   for (auto it = quad_list.BackToFrontBegin();
        result == gfx::kCALayerSuccess && it != quad_list.BackToFrontEnd();
        ++it) {
     const DrawQuad* quad = *it;
+
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    quad->AsValueInto(value.get());
+    TRACE_EVENT_BEGIN1("viz", "iterator:CA:quad", "quad", std::move(value));
+
     CALayerOverlay ca_layer;
     bool skip = false;
     bool render_pass_draw_quad = false;
@@ -526,22 +544,27 @@ bool CALayerOverlayProcessor::ProcessForCALayerOverlays(
         resource_provider, display_rect, quad, render_pass_filters,
         render_pass_backdrop_filters, &ca_layer, &skip, &render_pass_draw_quad,
         yuv_draw_quad_count);
+    TRACE_EVENT_END1("viz", "iterator:CA:quad", "to-CALayer-result", result);
     if (result != gfx::kCALayerSuccess)
       break;
 
     if (render_pass_draw_quad) {
       ++render_pass_draw_quad_count;
       if (render_pass_draw_quad_count > kTooManyRenderPassDrawQuads) {
+        TRACE_EVENT0("viz", "kCALayerFailedTooManyRenderPassDrawQuadsKY");
         result = gfx::kCALayerFailedTooManyRenderPassDrawQuads;
         break;
       }
     }
 
-    if (skip)
+    if (skip) {
+      TRACE_EVENT0("viz", "continue-skipKY");
       continue;
+    }
 
     if (!AreClipSettingsValid(ca_layer, ca_layer_overlays)) {
       result = gfx::kCALayerFailedDifferentClipSettings;
+      TRACE_EVENT0("viz", "kCALayerFailedDifferentClipSettingsKY");
       break;
     }
 
@@ -554,6 +577,7 @@ bool CALayerOverlayProcessor::ProcessForCALayerOverlays(
   // mode. (video count >= kMaxNumVideos(5)) Otherwise, fail CALayerOverlay.
   if (num_visible_quads > kTooManyQuads &&
       yuv_draw_quad_count < kMaxNumVideos) {
+    TRACE_EVENT0("viz", "kCALayerFailedTooManyQuadsKY");
     result = gfx::kCALayerFailedTooManyQuads;
   }
 
@@ -561,6 +585,7 @@ bool CALayerOverlayProcessor::ProcessForCALayerOverlays(
   SaveCALayerResult(result);
 
   if (result != gfx::kCALayerSuccess) {
+    TRACE_EVENT0("viz", "ca_layer_overlays->clearKY");
     ca_layer_overlays->clear();
     return false;
   }

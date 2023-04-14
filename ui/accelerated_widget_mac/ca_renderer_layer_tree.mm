@@ -1049,7 +1049,7 @@ void CARendererLayerTree::ClipAndSortingLayer::CommitToCA(
           setSublayerTransform:CATransform3DMakeTranslation(
                                    -dip_rounded_corner_bounds.x(),
                                    -dip_rounded_corner_bounds.y(), 0)];
-
+      // [rounded_corner_ca_layer_ setMaskedCorners:(CACornerMask)]
       [rounded_corner_ca_layer_
           setCornerRadius:rounded_corner_bounds_.GetSimpleRadius() /
                           tree()->scale_factor_];
