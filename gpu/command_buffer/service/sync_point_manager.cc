@@ -21,6 +21,8 @@
 #include "base/trace_event/traced_value.h"
 #include "base/values.h"
 
+#include "gpu/command_buffer/service/sequence_id.h"
+
 namespace gpu {
 
 namespace {
@@ -332,7 +334,7 @@ bool SyncPointClientState::WaitForRelease(uint64_t release,
   value->SetInteger("order_data_->unprocessed_order_num",
                     order_data_->unprocessed_order_num());
   value->SetInteger("order_data_->current_order_num",
-                    order_data_->current_order_num());
+                    order_data_->current_order_num_);
   value->SetPointer("order_data_", (void*)order_data_.get());
   TRACE_EVENT1("viz", "SyncPointClientState::WaitForReleaseKY", "value",
                std::move(value));
