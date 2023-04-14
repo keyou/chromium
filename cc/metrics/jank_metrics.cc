@@ -89,11 +89,20 @@ JankMetrics::JankMetrics(FrameSequenceTrackerType tracker_type,
                          FrameInfo::SmoothEffectDrivingThread effective_thread)
     : tracker_type_(tracker_type), effective_thread_(effective_thread) {
   DCHECK(IsValidJankThreadType(effective_thread));
+  TRACE_EVENT2(
+      "cc", "ctor:JankMetricsKY", "tracker_type_",
+      FrameSequenceTracker::GetFrameSequenceTrackerTypeName(tracker_type),
+      "effective_thread_", GetJankThreadTypeName(effective_thread_));
+
+  TRACE_EVENT1("cc", "prev_frame_delta_initKY", "prev_frame_delta_old",
+               std::to_string(prev_frame_delta_.InMicroseconds()));
 }
 JankMetrics::~JankMetrics() = default;
 
 void JankMetrics::AddSubmitFrame(uint32_t frame_token,
                                  uint32_t sequence_number) {
+  TRACE_EVENT2("cc", "JankMetrics::AddSubmitFrameKY", "frame_token",
+               frame_token, "sequence_number", sequence_number);
   // When a frame is submitted, record its |frame_token| and its associated
   // |sequence_number|. This pushed item will be removed when this frame is
   // presented.
@@ -103,6 +112,8 @@ void JankMetrics::AddSubmitFrame(uint32_t frame_token,
 void JankMetrics::AddFrameWithNoUpdate(uint32_t sequence_number,
                                        base::TimeDelta frame_interval) {
   DCHECK_LE(queue_frame_id_and_interval_.size(), kMaxNoUpdateFrameQueueLength);
+  TRACE_EVENT2("cc", "JankMetrics::AddFrameWithNoUpdateKY", "frame_interval",
+               frame_interval, "sequence_number", sequence_number);
 
   // If a frame does not cause an increase in expected frames, it will be
   // recorded here and later subtracted from the presentation interval that
@@ -181,20 +192,29 @@ void JankMetrics::AddPresentedFrame(
 
   // Setting the current_frame_delta to zero conveniently excludes the current
   // frame to be ignored from jank/stale calculation.
-  base::TimeDelta current_frame_delta = (will_ignore_current_frame)
-                                            ? zero_delta
-                                            : current_presentation_timestamp -
-                                                  last_presentation_timestamp_ -
-                                                  no_update_time;
+  base::TimeDelta current_frame_delta =
+      (will_ignore_current_frame || last_presentation_timestamp_.is_null())
+          ? zero_delta
+          : current_presentation_timestamp - last_presentation_timestamp_ -
+                no_update_time;
 
   auto value = std::make_unique<base::trace_event::TracedValue>();
   value->SetInteger("presented_frame_token", presented_frame_token);
+  value->SetInteger("no_update_time", no_update_time.ToInternalValue());
+  value->SetInteger("last_presentation_timestamp_",
+                    last_presentation_timestamp_.ToInternalValue());
   value->SetInteger("current_presentation_timestamp",
                     current_presentation_timestamp.ToInternalValue());
   value->SetInteger("frame_interval", frame_interval.InMicroseconds());
   value->SetInteger("current_frame_delta",
                     current_frame_delta.InMicroseconds());
   value->SetInteger("prev_frame_delta_", prev_frame_delta_.InMicroseconds());
+  value->SetPointer("this", (void*)this);
+  value->SetString("effective_thread_",
+                   GetJankThreadTypeName(effective_thread_));
+  value->SetString(
+      "type",
+      FrameSequenceTracker::GetFrameSequenceTrackerTypeName(tracker_type_));
   TRACE_EVENT1("cc", "JankMetrics::AddPresentedFrameZK", "value",
                std::move(value));
 
@@ -235,29 +255,55 @@ void JankMetrics::AddPresentedFrame(
         max_staleness_ = staleness;
     }
 
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetString("prev_frame_delta_",
+                     std::to_string(prev_frame_delta_.InMicroseconds()));
+    value->SetString("current_frame_delta",
+                     std::to_string(current_frame_delta.InMicroseconds()));
+    value->SetInteger("frame_interval", frame_interval.InMicroseconds());
+    value->SetBoolean("prev_frame_delta_.is_zero()",
+                      prev_frame_delta_.is_zero());
+    value->SetInteger("no_update_time", no_update_time.InMicroseconds());
     if (!prev_frame_delta_.is_zero() &&
         current_frame_delta > prev_frame_delta_ + 0.5 * frame_interval) {
       jank_count_++;
-      auto value = std::make_unique<base::trace_event::TracedValue>();
-      value->SetInteger("prev_frame_delta_",
-                        prev_frame_delta_.InMicroseconds());
-      value->SetInteger("current_frame_delta",
-                        current_frame_delta.InMicroseconds());
-      value->SetInteger("frame_interval", frame_interval.InMicroseconds());
+      value->SetInteger("jank_count_", jank_count_);
+      TRACE_EVENT1("cc", "HasJankKY", "current_frame_delta",
+                   current_frame_delta.InMicroseconds());
       TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
-          "cc,benchmark", "Jank", TRACE_ID_LOCAL(this),
+          "cc,benchmark", "JankKY", TRACE_ID_LOCAL(this),
           last_presentation_timestamp_, "thread-type",
           GetJankThreadTypeName(effective_thread_));
       TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP2(
-          "cc,benchmark", "Jank", TRACE_ID_LOCAL(this),
+          "cc,benchmark", "JankKY", TRACE_ID_LOCAL(this),
           current_presentation_timestamp, "tracker-type",
           FrameSequenceTracker::GetFrameSequenceTrackerTypeName(tracker_type_),
           "paramsZK", std::move(value));
+    } else {
+      value->SetInteger("jank_count_", jank_count_);
+      auto value2 = std::make_unique<base::trace_event::TracedValue>();
+      value2->SetValue("value", value.get());
+      TRACE_EVENT1("cc", "NoJankKY", "value", std::move(value));
+      // if (!no_update_time.is_zero()) {
+      TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
+          "cc,benchmark", "NoJank1KY", TRACE_ID_LOCAL(this),
+          last_presentation_timestamp_, "thread-type",
+          GetJankThreadTypeName(effective_thread_));
+      TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP2(
+          "cc,benchmark", "NoJank1KY", TRACE_ID_LOCAL(this),
+          current_presentation_timestamp, "tracker-type",
+          FrameSequenceTracker::GetFrameSequenceTrackerTypeName(tracker_type_),
+          "paramsZK", std::move(value2));
+      // }
     }
   }
   last_presentation_timestamp_ = current_presentation_timestamp;
   last_presentation_frame_id_ = presented_frame_id;
+  TRACE_EVENT_BEGIN1("cc", "prev_frame_delta_=KY", "prev_frame_delta_old",
+                     std::to_string(prev_frame_delta_.InMicroseconds()));
   prev_frame_delta_ = current_frame_delta;
+  TRACE_EVENT_END1("cc", "prev_frame_delta_=KY", "prev_frame_delta_new",
+                   std::to_string(prev_frame_delta_.InMicroseconds()));
 }
 
 void JankMetrics::ReportJankMetrics(int frames_expected) {

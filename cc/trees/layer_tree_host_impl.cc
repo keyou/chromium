@@ -2148,6 +2148,8 @@ void LayerTreeHostImpl::DidReceiveCompositorFrameAck() {
 void LayerTreeHostImpl::DidPresentCompositorFrame(
     uint32_t frame_token,
     const viz::FrameTimingDetails& details) {
+  TRACE_EVENT1("cc", "LayerTreeHostImpl::DidPresentCompositorFrameKY",
+               "frame_token", frame_token);
   PresentationTimeCallbackBuffer::PendingCallbacks activated_callbacks =
       presentation_time_callbacks_.PopPendingCallbacks(
           frame_token, details.presentation_feedback.failed());
@@ -2482,6 +2484,7 @@ absl::optional<LayerTreeHostImpl::SubmitInfo> LayerTreeHostImpl::DrawLayers(
     FrameData* frame) {
   DCHECK(CanDraw());
   DCHECK_EQ(frame->has_no_damage, frame->render_passes.empty());
+  TRACE_EVENT0("cc", "LayerTreeHostImpl::DrawLayersKY");
   ResetRequiresHighResToDraw();
 
   if (frame->has_no_damage) {
@@ -5178,6 +5181,9 @@ void LayerTreeHostImpl::NotifyDidPresentCompositorFrameOnImplThread(
     uint32_t frame_token,
     std::vector<PresentationTimeCallbackBuffer::SuccessfulCallback> callbacks,
     const viz::FrameTimingDetails& details) {
+  TRACE_EVENT1(
+      "cc", "LayerTreeHostImpl::NotifyDidPresentCompositorFrameOnImplThreadKY",
+      "frame_token", frame_token);
   frame_trackers_.NotifyFramePresented(frame_token,
                                        details.presentation_feedback);
   for (auto& callback : callbacks)

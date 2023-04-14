@@ -93,8 +93,11 @@ void LatencyUkmReporter::ReportCompositorLatencyUkm(
         processed_blink_breakdown,
     const CompositorFrameReporter::ProcessedVizBreakdown&
         processed_viz_breakdown) {
+  TRACE_EVENT1("cc", "LatencyUkmReporter::ReportCompositorLatencyUkmKY",
+               "ukm_manager_", (void*)ukm_manager_.get());
   if (ukm_manager_ &&
       compositor_latency_sampling_controller_->ShouldRecordNextEvent()) {
+    TRACE_EVENT0("cc", "ukm_manager_->RecordCompositorLatencyUKMKY");
     ukm_manager_->RecordCompositorLatencyUKM(
         report_types, stage_history, active_trackers, processed_blink_breakdown,
         processed_viz_breakdown);
@@ -108,8 +111,11 @@ void LatencyUkmReporter::ReportEventLatencyUkm(
         processed_blink_breakdown,
     const CompositorFrameReporter::ProcessedVizBreakdown&
         processed_viz_breakdown) {
+  TRACE_EVENT1("cc", "LatencyUkmReporter::ReportEventLatencyUkmKY",
+               "ukm_manager_", (void*)ukm_manager_.get());
   if (ukm_manager_ &&
       event_latency_sampling_controller_->ShouldRecordNextEvent()) {
+    TRACE_EVENT0("cc", "ukm_manager_->RecordEventLatencyUKMKY");
     ukm_manager_->RecordEventLatencyUKM(events_metrics, stage_history,
                                         processed_blink_breakdown,
                                         processed_viz_breakdown);

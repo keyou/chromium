@@ -139,6 +139,8 @@ DroppedFrameCounter::DroppedFrameCounter()
     int sliding_window_seconds = base::GetFieldTrialParamByFeatureAsInt(
         features::kSlidingWindowForDroppedFrameCounter,
         kSlidingWindowForDroppedFrameCounterSeconds, 0);
+    TRACE_EVENT1("cc", "kSlidingWindowForDroppedFrameCounterKY",
+                 "sliding_window_seconds", sliding_window_seconds);
     if (sliding_window_seconds)
       sliding_window_interval_ = base::Seconds(sliding_window_seconds);
   }
@@ -337,6 +339,7 @@ void DroppedFrameCounter::ReportFrames() {
   value1->SetInteger("total_frames_", total_frames_);
   value1->SetInteger("total_smoothness_dropped_", total_smoothness_dropped_);
   value1->SetInteger("total_dropped_", total_dropped_);
+  value1->SetInteger("total_partial_", total_partial_);
   TRACE_EVENT1("cc,benchmark", "SmoothnessDroppedFrameKY", "value",
                std::move(value1));
   if (sliding_window_max_percent_dropped_ !=
@@ -564,21 +567,24 @@ void DroppedFrameCounter::NotifyFrameResult(const viz::BeginFrameArgs& args,
   UpdateDroppedFrameCountInWindow(frame_info, 1);
 
   const bool is_dropped = frame_info.IsDroppedAffectingSmoothness();
+  {
+    TRACE_EVENT2("cc", "DroppedFrameDuration1KY", "is_dropped", is_dropped,
+                 "in_dropping_", in_dropping_);
+  }
   if (!in_dropping_ && is_dropped) {
     TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
-        "cc,benchmark", "DroppedFrameDuration", TRACE_ID_LOCAL(this),
+        "cc,benchmark", "DroppedFrameDurationKY", TRACE_ID_LOCAL(this),
         args.frame_time);
     in_dropping_ = true;
   } else if (in_dropping_ && !is_dropped) {
     TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
-        "cc,benchmark", "DroppedFrameDuration", TRACE_ID_LOCAL(this),
+        "cc,benchmark", "DroppedFrameDurationKY", TRACE_ID_LOCAL(this),
         args.frame_time);
     in_dropping_ = false;
   }
 
   if (ComputeCurrentWindowSize() < sliding_window_interval_)
     return;
-
   DCHECK_GE(
       dropped_frame_count_in_window_[SmoothnessStrategy::kDefaultStrategy], 0u);
   DCHECK_GE(
@@ -586,11 +592,15 @@ void DroppedFrameCounter::NotifyFrameResult(const viz::BeginFrameArgs& args,
       dropped_frame_count_in_window_[SmoothnessStrategy::kDefaultStrategy]);
 
   auto current_window_interval = ComputeCurrentWindowSize();
+  TRACE_EVENT2("cc",
+               "ComputeCurrentWindowSize() < sliding_window_interval_ = false",
+               "current_window_interval", current_window_interval, "size",
+               sliding_window_.size());
   while (current_window_interval > sliding_window_interval_) {
     TRACE_EVENT2(
         "cc", "iterator:current_window_interval>sliding_window_interval_",
         "current_window_interval", current_window_interval.InMicroseconds(),
-        "sliding_window_interval_", sliding_window_interval_.InMicroseconds());
+        "size", sliding_window_.size());
     PopSlidingWindow();
     current_window_interval = ComputeCurrentWindowSize();
   }
@@ -636,6 +646,7 @@ void DroppedFrameCounter::PopSlidingWindow() {
   value->SetInteger("count", count);
   value->SetInteger("total_frames_", total_frames_);
   value->SetInteger("total_dropped_", total_dropped_);
+  value->SetInteger("total_frames_in_window_", total_frames_in_window_);
 
   uint32_t dropped =
       dropped_frame_count_in_window_[SmoothnessStrategy::kDefaultStrategy] -
@@ -699,7 +710,7 @@ void DroppedFrameCounter::PopSlidingWindow() {
   value->SetDouble("percent_dropped_frame_main", percent_dropped_frame_main);
   value->SetDouble("percent_dropped_frame_scroll",
                    percent_dropped_frame_scroll);
-  TRACE_EVENT1("cc", "sliding_window_histogram_-updateKY", "value",
+  TRACE_EVENT1("cc", "slidewindow:sliding_window_histogram_ZK", "value",
                std::move(value));
 
   UpdateMaxPercentDroppedFrame(percent_dropped_frame);
@@ -768,14 +779,14 @@ void DroppedFrameCounter::UpdateDroppedFrameCountInWindow(
                     dropped_frame_count_in_window_
                         [SmoothnessStrategy::kScrollFocusedStrategy]);
   value->SetInteger("count", count);
-  TRACE_EVENT1("cc", "dropped_frame_count_in_window_KY", "value",
+  TRACE_EVENT1("cc", "slidewindow:dropped_frame_count_in_window_KY", "value",
                std::move(value));
 }
 
 void DroppedFrameCounter::UpdateMaxPercentDroppedFrame(
     double percent_dropped_frame) {
   TRACE_EVENT2("cc", "DroppedFrameCounter::UpdateMaxPercentDroppedFrameKY",
-               "this", this, "fcp_received_", fcp_received_);
+               "this", (void*)this, "fcp_received_", fcp_received_);
   if (!fcp_received_)
     return;
   const auto fcp_time_delta = latest_sliding_window_start_ - time_fcp_received_;
@@ -792,13 +803,30 @@ void DroppedFrameCounter::UpdateMaxPercentDroppedFrame(
     sliding_window_max_percent_dropped_After_5_sec_ =
         std::max(sliding_window_max_percent_dropped_After_5_sec_.value_or(0.0),
                  percent_dropped_frame);
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetDouble("percent_dropped_frame", percent_dropped_frame);
+  value->SetString("time_fcp_received_",
+                   std::to_string(time_fcp_received_.ToInternalValue()));
+  value->SetString(
+      "latest_sliding_window_start_",
+      std::to_string(latest_sliding_window_start_.ToInternalValue()));
+  value->SetDouble("fcp_time_delta(s)", fcp_time_delta.InSecondsF());
+  value->SetDouble("sliding_window_max_percent_dropped_After_1_sec_",
+                   sliding_window_max_percent_dropped_After_1_sec_.value_or(0));
+  value->SetDouble("sliding_window_max_percent_dropped_After_3_sec_",
+                   sliding_window_max_percent_dropped_After_1_sec_.value_or(0));
+  value->SetDouble("sliding_window_max_percent_dropped_After_5_sec_",
+                   sliding_window_max_percent_dropped_After_1_sec_.value_or(0));
+  TRACE_EVENT1("cc", "slidewindow:max_percent_dropped_xx", "value",
+               std::move(value));
 }
 
 void DroppedFrameCounter::OnFcpReceived() {
   DCHECK(!fcp_received_);
-  TRACE_EVENT1("cc", "DroppedFrameCounter::OnFcpReceivedKY", "this", this);
   fcp_received_ = true;
   time_fcp_received_ = base::TimeTicks::Now();
+  TRACE_EVENT2("cc", "DroppedFrameCounter::OnFcpReceivedKY", "this",
+               (void*)this, "time_fcp_received_", time_fcp_received_);
 }
 
 void DroppedFrameCounter::SetSortedFrameCallback(SortedFrameCallback callback) {

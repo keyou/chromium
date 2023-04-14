@@ -860,7 +860,16 @@ void InputHandlerProxy::RecordMainThreadScrollingReasons(
       device != WebGestureDevice::kTouchscreen) {
     return;
   }
-
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  cc::MainThreadScrollingReason::AddToTracedValue(reasons_from_scroll_begin,
+                                                  *value);
+  value->SetBoolean("was_main_thread_hit_tested", was_main_thread_hit_tested);
+  value->SetInteger("device", static_cast<int>(device));
+  value->SetString(
+      "main_thread_repaint_reasons",
+      cc::MainThreadScrollingReason::AsText(main_thread_repaint_reasons));
+  TRACE_EVENT_BEGIN0("input",
+                     "InputHandlerProxy::RecordMainThreadScrollingReasonsKY");
   // The "NonCompositedScrollReasons" are only reported by the pre-unification
   // main thread event handling path.
   DCHECK(!cc::MainThreadScrollingReason::HasNonCompositedScrollReasons(
@@ -890,6 +899,15 @@ void InputHandlerProxy::RecordMainThreadScrollingReasons(
 
   auto scroll_start_state = RecordScrollingThread(
       is_compositor_scroll, blocked_on_main_at_begin, device);
+  value->SetBoolean("is_compositor_scroll", is_compositor_scroll);
+  value->SetBoolean("blocked_on_main_thread_handler",
+                    blocked_on_main_thread_handler);
+  value->SetBoolean("blocked_on_main_at_begin", blocked_on_main_at_begin);
+  value->SetInteger("scroll_start_state", static_cast<int>(scroll_start_state));
+  TRACE_EVENT_END1("input",
+                   "InputHandlerProxy::RecordMainThreadScrollingReasonsKY",
+                   "value", std::move(value));
+
   input_handler_->RecordScrollBegin(GestureScrollInputType(device),
                                     scroll_start_state);
 

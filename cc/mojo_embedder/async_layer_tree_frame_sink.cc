@@ -256,6 +256,7 @@ void AsyncLayerTreeFrameSink::DidReceiveCompositorFrameAck(
 void AsyncLayerTreeFrameSink::OnBeginFrame(
     const viz::BeginFrameArgs& args,
     const viz::FrameTimingDetailsMap& timing_details) {
+  TRACE_EVENT0("cc", "AsyncLayerTreeFrameSink::OnBeginFrameKY");
   for (const auto& pair : timing_details) {
     client_->DidPresentCompositorFrame(pair.first, pair.second);
   }

@@ -11,6 +11,8 @@
 #include "base/containers/cxx20_erase.h"
 #include "base/memory/ptr_util.h"
 #include "cc/metrics/compositor_frame_reporting_controller.h"
+#include "cc/metrics/frame_info.h"
+#include "cc/metrics/frame_sequence_metrics.h"
 #include "cc/metrics/frame_sequence_tracker.h"
 #include "cc/metrics/throughput_ukm_reporter.h"
 
@@ -49,6 +51,15 @@ FrameSequenceTracker* FrameSequenceTrackerCollection::StartSequenceInternal(
   DCHECK_NE(FrameSequenceTrackerType::kCustom, type);
   if (is_single_threaded_)
     return nullptr;
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetString("type",
+                   FrameSequenceTracker::GetFrameSequenceTrackerTypeName(type));
+  value->SetBoolean(
+      "scrolling_thread_is_mainKY",
+      scrolling_thread == FrameInfo::SmoothEffectDrivingThread::kMain);
+  value->SetPointer("this", (void*)this);
+  TRACE_EVENT1("cc", "FrameSequenceTrackerCollection::StartSequenceInternalKY",
+               "value", std::move(value));
   auto key = std::make_pair(type, scrolling_thread);
   if (frame_trackers_.contains(key))
     return frame_trackers_[key].get();
@@ -118,7 +129,6 @@ void FrameSequenceTrackerCollection::CleanUp() {
 void FrameSequenceTrackerCollection::StopSequence(
     FrameSequenceTrackerType type) {
   DCHECK_NE(FrameSequenceTrackerType::kCustom, type);
-
   auto key = std::make_pair(type, ThreadType::kUnknown);
   if (IsScrollType(type)) {
     compositor_frame_reporting_controller_->SetScrollingThread(
@@ -131,6 +141,9 @@ void FrameSequenceTrackerCollection::StopSequence(
   if (!frame_trackers_.contains(key))
     return;
 
+  TRACE_EVENT2("cc", "FrameSequenceTrackerCollection::StopSequenceKY", "type",
+               FrameSequenceTracker::GetFrameSequenceTrackerTypeName(type),
+               "this", (void*)this);
   auto tracker = std::move(frame_trackers_[key]);
   if (compositor_frame_reporting_controller_) {
     compositor_frame_reporting_controller_->RemoveActiveTracker(
@@ -163,7 +176,8 @@ void FrameSequenceTrackerCollection::StopSequence(
 
 void FrameSequenceTrackerCollection::StartCustomSequence(int sequence_id) {
   DCHECK(!base::Contains(custom_frame_trackers_, sequence_id));
-
+  TRACE_EVENT1("cc", "FrameSequenceTrackerCollection::StartCustomSequenceKY",
+               "sequence_id", sequence_id);
   // base::Unretained() is safe here because |this| owns FrameSequenceTracker
   // and FrameSequenceMetrics.
   custom_frame_trackers_[sequence_id] =
@@ -175,6 +189,8 @@ void FrameSequenceTrackerCollection::StartCustomSequence(int sequence_id) {
 }
 
 void FrameSequenceTrackerCollection::StopCustomSequence(int sequence_id) {
+  TRACE_EVENT2("cc", "FrameSequenceTrackerCollection::StopCustomSequenceKY",
+               "sequence_id", sequence_id, "this", (void*)this);
   auto it = custom_frame_trackers_.find(sequence_id);
   // This happens when an animation is aborted before starting.
   if (it == custom_frame_trackers_.end())
@@ -195,6 +211,7 @@ void FrameSequenceTrackerCollection::ClearAll() {
 
 void FrameSequenceTrackerCollection::NotifyBeginImplFrame(
     const viz::BeginFrameArgs& args) {
+  TRACE_EVENT0("cc", "FrameSequenceTrackerCollection::NotifyBeginImplFrameKY");
   RecreateTrackers(args);
   for (auto& tracker : frame_trackers_)
     tracker.second->ReportBeginImplFrame(args);
@@ -204,6 +221,7 @@ void FrameSequenceTrackerCollection::NotifyBeginImplFrame(
 
 void FrameSequenceTrackerCollection::NotifyBeginMainFrame(
     const viz::BeginFrameArgs& args) {
+  TRACE_EVENT0("cc", "FrameSequenceTrackerCollection::NotifyBeginMainFrameKY");
   for (auto& tracker : frame_trackers_)
     tracker.second->ReportBeginMainFrame(args);
   for (auto& tracker : custom_frame_trackers_)
@@ -220,6 +238,8 @@ void FrameSequenceTrackerCollection::NotifyMainFrameProcessed(
 
 void FrameSequenceTrackerCollection::NotifyImplFrameCausedNoDamage(
     const viz::BeginFrameAck& ack) {
+  TRACE_EVENT0(
+      "cc", "FrameSequenceTrackerCollection::NotifyImplFrameCausedNoDamageKY");
   for (auto& tracker : frame_trackers_)
     tracker.second->ReportImplFrameCausedNoDamage(ack);
   for (auto& tracker : custom_frame_trackers_)
@@ -234,6 +254,8 @@ void FrameSequenceTrackerCollection::NotifyImplFrameCausedNoDamage(
 void FrameSequenceTrackerCollection::NotifyMainFrameCausedNoDamage(
     const viz::BeginFrameArgs& args,
     bool aborted) {
+  TRACE_EVENT0(
+      "cc", "FrameSequenceTrackerCollection::NotifyMainFrameCausedNoDamageKY");
   for (auto& tracker : frame_trackers_)
     tracker.second->ReportMainFrameCausedNoDamage(args, aborted);
   for (auto& tracker : custom_frame_trackers_)
@@ -252,6 +274,11 @@ void FrameSequenceTrackerCollection::NotifySubmitFrame(
     bool has_missing_content,
     const viz::BeginFrameAck& ack,
     const viz::BeginFrameArgs& origin_args) {
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("frame_token", frame_token);
+  value->SetBoolean("has_missing_content", has_missing_content);
+  TRACE_EVENT1("cc", "FrameSequenceTrackerCollection::NotifySubmitFrameKY",
+               "value", std::move(value));
   for (auto& tracker : frame_trackers_) {
     tracker.second->ReportSubmitFrame(frame_token, has_missing_content, ack,
                                       origin_args);
@@ -276,6 +303,7 @@ void FrameSequenceTrackerCollection::NotifySubmitFrame(
 void FrameSequenceTrackerCollection::NotifyFrameEnd(
     const viz::BeginFrameArgs& args,
     const viz::BeginFrameArgs& main_args) {
+  TRACE_EVENT0("cc", "FrameSequenceTrackerCollection::NotifyFrameEndKY");
   for (auto& tracker : frame_trackers_)
     tracker.second->ReportFrameEnd(args, main_args);
   for (auto& tracker : custom_frame_trackers_)
@@ -291,8 +319,11 @@ void FrameSequenceTrackerCollection::NotifyFrameEnd(
 void FrameSequenceTrackerCollection::NotifyFramePresented(
     uint32_t frame_token,
     const gfx::PresentationFeedback& feedback) {
-  for (auto& tracker : frame_trackers_)
+  TRACE_EVENT1("cc", "FrameSequenceTrackerCollection::NotifyFramePresentedKY",
+               "frame_token", frame_token);
+  for (auto& tracker : frame_trackers_) {
     tracker.second->ReportFramePresented(frame_token, feedback);
+  }
   for (auto& tracker : custom_frame_trackers_)
     tracker.second->ReportFramePresented(frame_token, feedback);
   for (auto& tracker : removal_trackers_)
@@ -302,9 +333,13 @@ void FrameSequenceTrackerCollection::NotifyFramePresented(
 }
 
 void FrameSequenceTrackerCollection::DestroyTrackers() {
+  TRACE_EVENT1("cc", "FrameSequenceTrackerCollection::DestroyTrackersKY",
+               "this", (void*)this);
   for (auto& tracker : removal_trackers_) {
     if (tracker->termination_status() ==
         FrameSequenceTracker::TerminationStatus::kReadyForTermination) {
+      TRACE_EVENT1("cc", "iterator:removal_trackers_", "tracker",
+                   (void*)&tracker);
       // The tracker is ready to be terminated.
       // For non kCustom typed trackers, take the metrics from the tracker.
       // merge with any outstanding metrics from previous trackers of the same
@@ -327,8 +362,19 @@ void FrameSequenceTrackerCollection::DestroyTrackers() {
 
       if (metrics->HasEnoughDataForReporting())
         metrics->ReportMetrics();
-      if (metrics->HasDataLeftForReporting())
+      if (metrics->HasDataLeftForReporting()) {
+        auto value = FrameSequenceMetrics::ThroughputData::ToTracedValue(
+            metrics->impl_throughput(), metrics->main_throughput(),
+            metrics->GetEffectiveThread());
+        value->SetInteger("checkboard", metrics->frames_checkerboarded());
+        value->SetString("type",
+                         FrameSequenceTracker::GetFrameSequenceTrackerTypeName(
+                             metrics->type()));
+        value->SetPointer("metrics", (void*)metrics.get());
+        TRACE_EVENT1("cc", "HasDataLeftForReportingKY", "value",
+                     std::move(value));
         accumulated_metrics_[key] = std::move(metrics);
+      }
     }
   }
 
@@ -342,6 +388,7 @@ void FrameSequenceTrackerCollection::DestroyTrackers() {
 
 void FrameSequenceTrackerCollection::RecreateTrackers(
     const viz::BeginFrameArgs& args) {
+  TRACE_EVENT0("cc", "FrameSequenceTrackerCollection::RecreateTrackersKY");
   std::vector<std::pair<FrameSequenceTrackerType, ThreadType>>
       recreate_trackers;
   for (const auto& tracker : frame_trackers_) {

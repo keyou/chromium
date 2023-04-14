@@ -192,7 +192,8 @@ void EventLatencyTracingRecorder::RecordEventLatencyTraceEvent(
     const CompositorFrameReporter::ProcessedVizBreakdown* viz_breakdown) {
   DCHECK(event_metrics);
   DCHECK(event_metrics->should_record_tracing());
-
+  TRACE_EVENT0("cc",
+               "EventLatencyTracingRecorder::RecordEventLatencyTraceEventKY");
   const base::TimeTicks generated_timestamp =
       event_metrics->GetDispatchStageTimestamp(
           EventMetrics::DispatchStage::kGenerated);
@@ -200,7 +201,7 @@ void EventLatencyTracingRecorder::RecordEventLatencyTraceEvent(
   const auto trace_track =
       perfetto::Track(base::trace_event::GetNextGlobalTraceId());
   TRACE_EVENT_BEGIN(
-      kTracingCategory, "EventLatency", trace_track, generated_timestamp,
+      kTracingCategory, "EventLatencyKY", trace_track, generated_timestamp,
       [&](perfetto::EventContext context) {
         auto* event =
             context.event<perfetto::protos::pbzero::ChromeTrackEvent>();

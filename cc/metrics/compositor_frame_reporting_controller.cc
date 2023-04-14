@@ -101,6 +101,8 @@ void CompositorFrameReportingController::ProcessSkippedFramesIfNecessary(
 
 void CompositorFrameReportingController::WillBeginImplFrame(
     const viz::BeginFrameArgs& args) {
+  TRACE_EVENT0("cc",
+               "CompositorFrameReportingController::WillBeginImplFrameKY");
   ProcessSkippedFramesIfNecessary(args);
   ReportMultipleSwaps(args.frame_time, last_interval_);
   last_interval_ = args.interval;
@@ -122,17 +124,22 @@ void CompositorFrameReportingController::WillBeginImplFrame(
                                Now());
     }
   }
+  // 创建新的 CompositorFrameReporter 对象来追踪当前 impl 帧的整个生命周期
   auto reporter = std::make_unique<CompositorFrameReporter>(
       active_trackers_, args, should_report_histograms_, GetSmoothThread(),
       scrolling_thread_, layer_tree_host_id_, global_trackers_);
   reporter->set_tick_clock(tick_clock_);
   reporter->StartStage(StageType::kBeginImplFrameToSendBeginMainFrame,
                        begin_time);
+  TRACE_EVENT1("cc", "new-reporter-for-impl", "reporter",
+               (void*)reporter.get());
   reporters_[PipelineStage::kBeginImplFrame] = std::move(reporter);
 }
 
 void CompositorFrameReportingController::WillBeginMainFrame(
     const viz::BeginFrameArgs& args) {
+  TRACE_EVENT0("cc",
+               "CompositorFrameReportingController::WillBeginMainFrameKY");
   if (reporters_[PipelineStage::kBeginImplFrame]) {
     // We need to use .get() below because operator<< in std::unique_ptr is a
     // C++20 feature.
@@ -160,11 +167,14 @@ void CompositorFrameReportingController::WillBeginMainFrame(
       active_trackers = last_started_compositor_frame_.active_trackers;
       smooth_thread = last_started_compositor_frame_.smooth_thread;
     }
+    // 创建新的 CompositorFrameReporter 对象来追踪当前 main 帧的整个生命周期
     auto reporter = std::make_unique<CompositorFrameReporter>(
         active_trackers, args, should_report_histograms_, smooth_thread,
         scrolling_thread, layer_tree_host_id_, global_trackers_);
     reporter->set_tick_clock(tick_clock_);
     reporter->StartStage(StageType::kSendBeginMainFrameToCommit, Now());
+    TRACE_EVENT1("cc", "new-reporter-for-main", "reporter",
+                 (void*)reporter.get());
     reporters_[PipelineStage::kBeginMainFrame] = std::move(reporter);
   }
 }
@@ -172,6 +182,8 @@ void CompositorFrameReportingController::WillBeginMainFrame(
 void CompositorFrameReportingController::BeginMainFrameAborted(
     const viz::BeginFrameId& id,
     CommitEarlyOutReason reason) {
+  TRACE_EVENT0("cc",
+               "CompositorFrameReportingController::BeginMainFrameAbortedKY");
   auto& reporter = reporters_[PipelineStage::kBeginMainFrame];
   DCHECK(reporter);
   DCHECK_EQ(reporter->frame_id(), id);
@@ -183,12 +195,14 @@ void CompositorFrameReportingController::BeginMainFrameAborted(
 
 void CompositorFrameReportingController::WillCommit() {
   DCHECK(reporters_[PipelineStage::kReadyToCommit]);
+  TRACE_EVENT0("cc", "CompositorFrameReportingController::WillCommitKY");
   reporters_[PipelineStage::kReadyToCommit]->StartStage(StageType::kCommit,
                                                         Now());
 }
 
 void CompositorFrameReportingController::DidCommit() {
   DCHECK(reporters_[PipelineStage::kReadyToCommit]);
+  TRACE_EVENT0("cc", "CompositorFrameReportingController::DidCommitKY");
   reporters_[PipelineStage::kReadyToCommit]->StartStage(
       StageType::kEndCommitToActivation, Now());
   AdvanceReporterStage(PipelineStage::kReadyToCommit, PipelineStage::kCommit);
@@ -201,6 +215,7 @@ void CompositorFrameReportingController::WillInvalidateOnImplSide() {
 }
 
 void CompositorFrameReportingController::WillActivate() {
+  TRACE_EVENT0("cc", "CompositorFrameReportingController::WillActivateKY");
   DCHECK(reporters_[PipelineStage::kCommit] || next_activate_has_invalidation_);
   if (!reporters_[PipelineStage::kCommit])
     return;
@@ -208,6 +223,7 @@ void CompositorFrameReportingController::WillActivate() {
 }
 
 void CompositorFrameReportingController::DidActivate() {
+  TRACE_EVENT0("cc", "CompositorFrameReportingController::DidActivateKY");
   DCHECK(reporters_[PipelineStage::kCommit] || next_activate_has_invalidation_);
   next_activate_has_invalidation_ = false;
   if (!reporters_[PipelineStage::kCommit])
@@ -226,7 +242,12 @@ void CompositorFrameReportingController::DidSubmitCompositorFrame(
     bool has_missing_content) {
   bool is_activated_frame_new =
       (last_activated_frame_id != last_submitted_frame_id_);
-
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("frame_token", frame_token);
+  value->SetBoolean("is_activated_frame_new", is_activated_frame_new);
+  TRACE_EVENT1("cc",
+               "CompositorFrameReportingController::DidSubmitCompositorFrameKY",
+               "value", std::move(value));
   // It is possible to submit a CompositorFrame containing outputs from two
   // different begin-frames: an begin-main-frame that was blocked on the
   // main-thread, and another one for the compositor thread.
@@ -351,6 +372,8 @@ void CompositorFrameReportingController::DidSubmitCompositorFrame(
 void CompositorFrameReportingController::DidNotProduceFrame(
     const viz::BeginFrameId& id,
     FrameSkippedReason skip_reason) {
+  TRACE_EVENT2("cc", "CompositorFrameReportingController::DidNotProduceFrameKY",
+               "id", id.ToString(), "skia_reason", skip_reason);
   for (auto& stage_reporter : reporters_) {
     if (stage_reporter && stage_reporter->frame_id() == id) {
       // The reporter will be flagged and terminated when replaced by another
@@ -372,6 +395,10 @@ void CompositorFrameReportingController::DidNotProduceFrame(
 void CompositorFrameReportingController::
     SetPartialUpdateDeciderWhenWaitingOnMain(
         std::unique_ptr<CompositorFrameReporter>& stage_reporter) {
+  TRACE_EVENT1("cc",
+               "CompositorFrameReportingController::"
+               "SetPartialUpdateDeciderWhenWaitingOnMainKY",
+               "stage_reporter", (void*)stage_reporter.get());
   // If the compositor has no updates, and the main-thread has not responded
   // to the begin-main-frame yet, then depending on main thread having
   // update or not this would be a NoFrameProduced or a DroppedFrame. To
@@ -441,6 +468,8 @@ void CompositorFrameReportingController::ReportMultipleSwaps(
 
 void CompositorFrameReportingController::OnFinishImplFrame(
     const viz::BeginFrameId& id) {
+  TRACE_EVENT1("cc", "CompositorFrameReportingController::OnFinishImplFrameKY",
+               "id", id.ToString());
   for (auto& reporter : reporters_) {
     if (reporter && reporter->frame_id() == id) {
       reporter->OnFinishImplFrame(Now());
@@ -453,10 +482,13 @@ void CompositorFrameReportingController::DidPresentCompositorFrame(
     uint32_t frame_token,
     const viz::FrameTimingDetails& details) {
   bool feedback_failed = details.presentation_feedback.failed();
-
+  TRACE_EVENT2(
+      "cc", "CompositorFrameReportingController::DidPresentCompositorFrameKY",
+      "frame_token", frame_token, "feedback_failed", feedback_failed);
   if (!feedback_failed)
     TrackSwapTiming(details);
-
+  TRACE_EVENT1("cc", "foreach:submitted_compositor_frames_", "size",
+               submitted_compositor_frames_.size());
   for (auto submitted_frame = submitted_compositor_frames_.begin();
        submitted_frame != submitted_compositor_frames_.end() &&
        !viz::FrameTokenGT(submitted_frame->frame_token, frame_token);) {
@@ -469,7 +501,7 @@ void CompositorFrameReportingController::DidPresentCompositorFrame(
       submitted_frame++;
       continue;
     }
-
+    TRACE_EVENT0("cc", "iterator:submitted_compositor_frame");
     auto termination_status = feedback_failed
                                   ? FrameTerminationStatus::kDidNotPresentFrame
                                   : FrameTerminationStatus::kPresentedFrame;
@@ -572,6 +604,9 @@ void CompositorFrameReportingController::DidPresentCompositorFrame(
 }
 
 void CompositorFrameReportingController::OnStoppedRequestingBeginFrames() {
+  TRACE_EVENT0(
+      "cc",
+      "CompositorFrameReportingController::OnStoppedRequestingBeginFramesKY");
   // If the client stopped requesting begin-frames, that means the begin-frames
   // currently being handled are no longer expected to produce any
   // compositor-frames. So terminate the reporters.
@@ -609,6 +644,8 @@ void CompositorFrameReportingController::RemoveActiveTracker(
 
 void CompositorFrameReportingController::SetScrollingThread(
     FrameInfo::SmoothEffectDrivingThread thread) {
+  TRACE_EVENT1("cc", "CompositorFrameReportingController::SetScrollingThreadKY",
+               "scrolling_thread_", ToString(thread));
   scrolling_thread_ = thread;
 }
 
@@ -636,11 +673,29 @@ void CompositorFrameReportingController::SetThreadAffectsSmoothness(
   if (current_smooth_thread != GetSmoothThread()) {
     smooth_thread_history_.insert(std::make_pair(Now(), current_smooth_thread));
   }
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetString("thread_type", ToString(thread_type));
+  value->SetBoolean("affects_smoothnexx", affects_smoothness);
+  value->SetBoolean("is_compositor_thread_driving_smoothness_",
+                    is_compositor_thread_driving_smoothness_);
+  value->SetBoolean("is_main_thread_driving_smoothness_",
+                    is_main_thread_driving_smoothness_);
+  value->SetString("smooth_thread_old", ToString(current_smooth_thread));
+  value->SetString("smooth_thread_new", ToString(GetSmoothThread()));
+  TRACE_EVENT1(
+      "cc", "CompositorFrameReportingController::SetThreadAffectsSmoothnessKY",
+      "value", std::move(value));
 }
 
 void CompositorFrameReportingController::AdvanceReporterStage(
     PipelineStage start,
     PipelineStage target) {
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("start", static_cast<int>(start));
+  value->SetInteger("target", static_cast<int>(target));
+  TRACE_EVENT1("cc",
+               "CompositorFrameReportingController::AdvanceReporterStageKY",
+               "value", std::move(value));
   auto& reporter = reporters_[target];
   if (reporter) {
     auto termination_status = FrameTerminationStatus::kReplacedByNewReporter;
@@ -683,6 +738,9 @@ bool CompositorFrameReportingController::CanSubmitMainFrame(
 std::unique_ptr<CompositorFrameReporter>
 CompositorFrameReportingController::RestoreReporterAtBeginImpl(
     const viz::BeginFrameId& id) {
+  TRACE_EVENT1(
+      "cc", "CompositorFrameReportingController::RestoreReporterAtBeginImplKY",
+      "id", id.ToString());
   auto& main_reporter = reporters_[PipelineStage::kBeginMainFrame];
   auto& ready_to_commit_reporter = reporters_[PipelineStage::kReadyToCommit];
   auto& commit_reporter = reporters_[PipelineStage::kCommit];

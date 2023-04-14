@@ -24,6 +24,7 @@
 #include "cc/metrics/dropped_frame_counter.h"
 #include "cc/metrics/event_latency_tracing_recorder.h"
 #include "cc/metrics/event_latency_tracker.h"
+#include "cc/metrics/event_metrics.h"
 #include "cc/metrics/frame_sequence_tracker.h"
 #include "cc/metrics/latency_ukm_reporter.h"
 #include "services/tracing/public/cpp/perfetto/macros.h"
@@ -149,6 +150,8 @@ std::string GetCompositorLatencyHistogramName(
 void ReportEventLatencyMetric(const std::string& name,
                               int index,
                               base::TimeDelta latency) {
+  TRACE_EVENT2("cc", "ReportEventLatencyMetric1KY", "name", name, "latency",
+               latency.InMicroseconds());
   STATIC_HISTOGRAM_POINTER_GROUP(
       name, index, kMaxEventLatencyHistogramIndex,
       AddTimeMicrosecondsGranularity(latency),
@@ -421,8 +424,8 @@ CompositorFrameReporter::CompositorFrameReporter(
   DCHECK(global_trackers_.dropped_frame_counter);
   auto value = std::make_unique<base::trace_event::TracedValue>();
   value->SetPointer("this", (void*)this);
-  value->SetInteger("smooth_thread", static_cast<int>(smooth_thread));
-  value->SetInteger("scrolling_thread", static_cast<int>(scrolling_thread));
+  value->SetString("smooth_thread", ToString(smooth_thread));
+  value->SetString("scrolling_thread", ToString(scrolling_thread));
   TRACE_EVENT1("cc", "ctor:CompositorFrameReporterKY", "value",
                std::move(value));
   global_trackers_.dropped_frame_counter->OnBeginFrame(
@@ -609,6 +612,7 @@ CompositorFrameReporter::CopyReporterAtBeginImplStage() {
 }
 
 CompositorFrameReporter::~CompositorFrameReporter() {
+  TRACE_EVENT0("cc", "~CompositorFrameReporterKY");
   TerminateReporter();
 }
 
@@ -635,6 +639,8 @@ void CompositorFrameReporter::StartStage(
     base::TimeTicks start_time) {
   if (frame_termination_status_ != FrameTerminationStatus::kUnknown)
     return;
+  TRACE_EVENT1("cc", "CompositorFrameReporter::StartStageKY", "stage_type",
+               GetStageName(stage_type));
   EndCurrentStage(start_time);
   current_stage_.stage_type = stage_type;
   current_stage_.start_time = start_time;
@@ -660,6 +666,8 @@ void CompositorFrameReporter::TerminateFrame(
   // terminated.
   if (frame_termination_status_ != FrameTerminationStatus::kUnknown)
     return;
+  TRACE_EVENT1("cc", "CompositorFrameReporter::TerminateFrameKY",
+               "termination_status", termination_status);
   frame_termination_status_ = termination_status;
   frame_termination_time_ = termination_time;
   EndCurrentStage(frame_termination_time_);
@@ -817,14 +825,19 @@ void CompositorFrameReporter::TerminateReporter() {
 void CompositorFrameReporter::EndCurrentStage(base::TimeTicks end_time) {
   if (current_stage_.start_time == base::TimeTicks())
     return;
+  TRACE_EVENT1("cc", "CompositorFrameReporter::EndCurrentStageKY", "stage_type",
+               GetStageName(current_stage_.stage_type));
   current_stage_.end_time = end_time;
   stage_history_.push_back(current_stage_);
   current_stage_.start_time = base::TimeTicks();
 }
 
 void CompositorFrameReporter::ReportCompositorLatencyMetrics() const {
-  TRACE_EVENT0("cc",
-               "CompositorFrameReporter::ReportCompositorLatencyMetricsKY");
+  TRACE_EVENT2("cc",
+               "CompositorFrameReporter::ReportCompositorLatencyMetricsKY",
+               "should_report_histograms_", should_report_histograms_,
+               "base::ShouldLogHistogramForCpuReductionExperiment()",
+               base::ShouldLogHistogramForCpuReductionExperiment());
   if (!base::ShouldLogHistogramForCpuReductionExperiment())
     return;
 
@@ -836,8 +849,10 @@ void CompositorFrameReporter::ReportCompositorLatencyMetrics() const {
 
   if (!should_report_histograms_)
     return;
-
+  TRACE_EVENT1("cc", "foreach:stage_history_", "size", stage_history_.size());
   for (const StageData& stage : stage_history_) {
+    TRACE_EVENT1("cc", "iterator:stage", "stage_type",
+                 GetStageName(stage.stage_type));
     ReportStageHistogramWithBreakdown(stage);
 
     if (stage.stage_type == StageType::kTotalLatency) {
@@ -851,10 +866,12 @@ void CompositorFrameReporter::ReportCompositorLatencyMetrics() const {
     }
   }
 
+  TRACE_EVENT1("cc", "foreach:report_types_", "size", report_types_.size());
   for (size_t type = 0; type < report_types_.size(); ++type) {
     if (!report_types_.test(type))
       continue;
     FrameReportType report_type = static_cast<FrameReportType>(type);
+    TRACE_EVENT1("cc", "iterator:report_type", "report_type", report_type);
     UMA_HISTOGRAM_ENUMERATION("CompositorLatency.Type", report_type);
     bool any_active_interaction = false;
     for (size_t fst_type = 0; fst_type < active_trackers_.size(); ++fst_type) {
@@ -1034,16 +1051,19 @@ void CompositorFrameReporter::ReportCompositorLatencyHistogram(
 void CompositorFrameReporter::ReportEventLatencyMetrics() const {
   const StageData& total_latency_stage = stage_history_.back();
   DCHECK_EQ(StageType::kTotalLatency, total_latency_stage.stage_type);
-  TRACE_EVENT0("cc", "CompositorFrameReporter::ReportEventLatencyMetricsKY");
+  TRACE_EVENT1("cc", "CompositorFrameReporter::ReportEventLatencyMetricsKY",
+               "should_report_histograms_", should_report_histograms_);
 
   if (global_trackers_.latency_ukm_reporter) {
+    TRACE_EVENT0("cc", "latency_ukm_reporter->ReportEventLatencyUkmKY");
     global_trackers_.latency_ukm_reporter->ReportEventLatencyUkm(
         events_metrics_, stage_history_, *processed_blink_breakdown_,
         *processed_viz_breakdown_);
   }
 
   std::vector<EventLatencyTracker::LatencyData> latencies;
-
+  TRACE_EVENT1("cc", "foreach:events_metrics_KY", "size",
+               events_metrics_.size());
   for (const auto& event_metrics : events_metrics_) {
     DCHECK(event_metrics);
     auto* scroll_metrics = event_metrics->AsScroll();
@@ -1142,7 +1162,7 @@ void CompositorFrameReporter::ReportCompositorLatencyTraceEvents(
   const auto trace_track =
       perfetto::Track(base::trace_event::GetNextGlobalTraceId());
   TRACE_EVENT_BEGIN(
-      kTraceCategory, "PipelineReporter", trace_track, args_.frame_time,
+      kTraceCategory, "PipelineReporterKY", trace_track, args_.frame_time,
       [&](perfetto::EventContext context) {
         using perfetto::protos::pbzero::ChromeFrameReporter;
         ChromeFrameReporter::State state;
@@ -1300,8 +1320,8 @@ void CompositorFrameReporter::ReportCompositorLatencyTraceEvents(
 }
 
 void CompositorFrameReporter::ReportEventLatencyTraceEvents() const {
-  TRACE_EVENT0("cc",
-               "CompositorFrameReporter::ReportEventLatencyTraceEventsKY");
+  TRACE_EVENT1("cc", "CompositorFrameReporter::ReportEventLatencyTraceEventsKY",
+               "events_metrics_.size", events_metrics_.size());
   // TODO(mohsen): This function is becoming large and there is concerns about
   // having this in the compositor critical path. crbug.com/1072740 is
   // considering doing the reporting off-thread, but as a short-term solution,
@@ -1750,12 +1770,12 @@ FrameInfo CompositorFrameReporter::GenerateFrameInfo() const {
     }
   }
   auto value = std::make_unique<base::trace_event::TracedValue>();
-  value->SetInteger("final_state", static_cast<int>(info.final_state));
+  value->SetString("final_state", ToString(info.final_state));
   value->SetBoolean("has_missing_content", info.has_missing_content);
   value->SetInteger("main_thread_response(kMissing=1)",
                     static_cast<int>(info.main_thread_response));
-  value->SetInteger("scroll_thread", static_cast<int>(info.scroll_thread));
-  value->SetInteger("smooth_thread", static_cast<int>(info.smooth_thread));
+  value->SetString("scroll_thread", ToString(info.scroll_thread));
+  value->SetString("smooth_thread", ToString(info.smooth_thread));
   value->SetInteger("total_latency", info.total_latency.InMicroseconds());
   value->SetBoolean("IsDroppedAffectingSmoothness",
                     info.IsDroppedAffectingSmoothness());

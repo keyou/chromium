@@ -165,6 +165,12 @@ void FrameSequenceTracker::ReportBeginImplFrame(
   UpdateTrackedFrameData(&begin_impl_frame_data_, args.frame_id.source_id,
                          args.frame_id.sequence_number,
                          args.frames_throttled_since_last);
+  {
+    TRACE_EVENT2("cc", "impl_throughput().frames_expected+=KY", "old_value",
+                 impl_throughput().frames_expected, "new_value",
+                 impl_throughput().frames_expected +
+                     begin_impl_frame_data_.previous_sequence_delta);
+  }
   impl_throughput().frames_expected +=
       begin_impl_frame_data_.previous_sequence_delta;
 #if DCHECK_IS_ON()
@@ -216,8 +222,21 @@ void FrameSequenceTracker::ReportBeginMainFrame(
       first_received_main_sequence_ <= last_no_main_damage_sequence_) {
     first_received_main_sequence_ = args.frame_id.sequence_number;
   }
+
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("old", main_throughput().frames_expected);
+  value->SetInteger("previous_sequence_delta",
+                    begin_main_frame_data_.previous_sequence_delta);
+  value->SetString("type", GetFrameSequenceTrackerTypeName(type()));
+  value->SetPointer("&main_throughput", (void*)&main_throughput());
+
   main_throughput().frames_expected +=
       begin_main_frame_data_.previous_sequence_delta;
+  {
+    value->SetInteger("new", main_throughput().frames_expected);
+    TRACE_EVENT1("cc", "main_throughput().frames_expected+=1KY", "value",
+                 std::move(value));
+  }
   previous_begin_main_sequence_ = current_begin_main_sequence_;
   current_begin_main_sequence_ = args.frame_id.sequence_number;
 }
@@ -243,6 +262,12 @@ void FrameSequenceTracker::ReportMainFrameProcessed(
     DCHECK_GE(main_throughput().frames_expected,
               begin_main_frame_data_.previous_sequence_delta)
         << TRACKER_DCHECK_MSG;
+    {
+      TRACE_EVENT2("cc", "main_throughput().frames_expected-=KY", "old_value",
+                   main_throughput().frames_expected, "new_value",
+                   main_throughput().frames_expected -
+                       begin_main_frame_data_.previous_sequence_delta);
+    }
     main_throughput().frames_expected -=
         begin_main_frame_data_.previous_sequence_delta;
     last_no_main_damage_sequence_ = previous_begin_main_sequence_;
@@ -266,7 +291,8 @@ void FrameSequenceTracker::ReportSubmitFrame(
     const viz::BeginFrameArgs& origin_args) {
   DCHECK_NE(termination_status_, TerminationStatus::kReadyForTermination);
 
-  TRACE_EVENT0("cc", "FrameSequenceTracker::ReportSubmitFrameZK");
+  TRACE_EVENT2("cc", "FrameSequenceTracker::ReportSubmitFrameZK", "frame_token",
+               frame_token, "has_missing_content", has_missing_content);
   // TODO(crbug.com/1072482): find a proper way to terminate a tracker.
   // Right now, we define a magical number |frames_to_terminate_tracker| = 3,
   // which means that if this frame_token is more than 3 frames compared with
@@ -334,12 +360,16 @@ void FrameSequenceTracker::ReportSubmitFrame(
 
       last_submitted_main_sequence_ = origin_args.frame_id.sequence_number;
       main_frames_.push_back(frame_token);
+      TRACE_EVENT1("cc", "main_frames_.push_back()KY", "main_frames.size()",
+                   main_frames_.size());
       DCHECK_GE(main_throughput().frames_expected, main_frames_.size())
           << TRACKER_DCHECK_MSG;
     }
   }
 
   if (has_missing_content) {
+    TRACE_EVENT1("cc", "checkerboarding_.frames.push_backKY", "frame_token",
+                 frame_token);
     checkerboarding_.frames.push_back(frame_token);
   }
 }
@@ -385,7 +415,14 @@ void FrameSequenceTracker::ReportFrameEnd(
       last_processed_main_sequence_latency_) {
     // If a compositor frame was submitted with new content from the
     // main-thread, then make sure the latency gets accounted for.
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetInteger("old", main_throughput().frames_expected);
     main_throughput().frames_expected += last_processed_main_sequence_latency_;
+    value->SetInteger("new", main_throughput().frames_expected);
+    value->SetString(
+        "type", FrameSequenceTracker::GetFrameSequenceTrackerTypeName(type()));
+    TRACE_EVENT1("cc", "main_throughput().frames_expected+=2KY", "value",
+                 std::move(value));
   }
 
   // It is possible that the compositor claims there was no damage from the
@@ -438,7 +475,14 @@ void FrameSequenceTracker::ReportFrameEnd(
 void FrameSequenceTracker::ReportFramePresented(
     uint32_t frame_token,
     const gfx::PresentationFeedback& feedback) {
-  TRACE_EVENT0("cc", "FrameSequenceTracker::ReportFramePresentedZK");
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetString("type", GetFrameSequenceTrackerTypeName(type()));
+  value->SetInteger("frame_token", frame_token);
+  value->SetString("effective_thread",
+                   ToString(metrics()->GetEffectiveThread()));
+  value->SetPointer("this", (void*)this);
+  TRACE_EVENT1("cc", "FrameSequenceTracker::ReportFramePresentedZK", "value",
+               std::move(value));
   // TODO(xidachen): We should early exit if |last_submitted_frame_| = 0, as it
   // means that we are presenting the same frame_token again.
   const bool submitted_frame_since_last_presentation = !!last_submitted_frame_;
@@ -483,19 +527,68 @@ void FrameSequenceTracker::ReportFramePresented(
       last_frame_presentation_timestamp_ + vsync_interval * 1.5;
 
   const bool was_presented = !feedback.failed();
+  {
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetString("safe_deadline_for_frame",
+                     std::to_string(safe_deadline_for_frame.ToInternalValue()));
+    value->SetString("feedback.timestamp",
+                     std::to_string(feedback.timestamp.ToInternalValue()));
+    value->SetString(
+        "last_frame_presentation_timestamp_",
+        std::to_string(last_frame_presentation_timestamp_.ToInternalValue()));
+    value->SetString(
+        "feedback.* - last_*",
+        std::to_string((feedback.timestamp - last_frame_presentation_timestamp_)
+                           .InMicroseconds()));
+    value->SetBoolean("was_presented", was_presented);
+    value->SetBoolean("submitted_frame_since_last_presentation",
+                      submitted_frame_since_last_presentation);
+    value->SetInteger("frame_token", frame_token);
+    value->SetInteger("main_frames_.size()", main_frames_.size());
+    value->SetInteger("main_frames_.front()",
+                      main_frames_.empty() ? 0 : main_frames_.front());
+    value->SetString("effective_thread",
+                     ToString(metrics()->GetEffectiveThread()));
+
+    value->BeginDictionary("throughput");
+    value->SetInteger("impl_frames_expected",
+                      impl_throughput().frames_expected);
+    value->SetInteger("impl_frames_produced",
+                      impl_throughput().frames_produced);
+    value->SetInteger("impl_frames_ontime", impl_throughput().frames_ontime);
+    value->SetInteger("main_frames_expected",
+                      main_throughput().frames_expected);
+    value->SetInteger("main_frames_produced",
+                      main_throughput().frames_produced);
+    value->SetInteger("main_frames_ontime", main_throughput().frames_ontime);
+    value->EndDictionary();
+    TRACE_EVENT1("cc", "tracker_statusKY", "value", std::move(value));
+  }
   if (was_presented && submitted_frame_since_last_presentation) {
+    TRACE_EVENT0("cc", "impl_throughputKY");
     if (!last_frame_presentation_timestamp_.is_null() &&
-        (safe_deadline_for_frame < feedback.timestamp)) {
+        (safe_deadline_for_frame >= feedback.timestamp)) {
       DCHECK_LE(impl_throughput().frames_ontime,
                 impl_throughput().frames_produced)
           << TRACKER_DCHECK_MSG;
       ++impl_throughput().frames_ontime;
+      {
+        TRACE_EVENT1("cc", "impl_throughput().frames_ontime++", "frames_ontime",
+                     impl_throughput().frames_ontime);
+      }
+    } else {
+      TRACE_EVENT1("cc", "impl_throughput().frames_ontimeNo", "frames_ontime",
+                   impl_throughput().frames_ontime);
     }
 
     DCHECK_LT(impl_throughput().frames_produced,
               impl_throughput().frames_expected)
         << TRACKER_DCHECK_MSG;
     ++impl_throughput().frames_produced;
+    {
+       TRACE_EVENT1("cc", "impl_throughput().frames_produced++",
+                    "frames_produced", impl_throughput().frames_produced);
+    }
     if (metrics()->GetEffectiveThread() == ThreadType::kCompositor) {
       metrics()->AdvanceTrace(feedback.timestamp);
     }
@@ -512,10 +605,16 @@ void FrameSequenceTracker::ReportFramePresented(
            !viz::FrameTokenGT(main_frames_.front(), frame_token)) {
       main_frames_.pop_front();
     }
+    TRACE_EVENT2("cc", "main_throughputKY", "size_before_erase",
+                 size_before_erase, "main_frames_.size()", main_frames_.size());
     if (main_frames_.size() < size_before_erase) {
       DCHECK_LT(main_throughput().frames_produced,
                 main_throughput().frames_expected)
           << TRACKER_DCHECK_MSG;
+      {
+        TRACE_EVENT1("cc", "main_throughput().frames_produced++",
+                     "frames_produced", main_throughput().frames_produced + 1);
+      }
       ++main_throughput().frames_produced;
       if (metrics()->GetEffectiveThread() == ThreadType::kMain) {
         metrics()->AdvanceTrace(feedback.timestamp);
@@ -526,10 +625,14 @@ void FrameSequenceTracker::ReportFramePresented(
     }
     if (main_frames_.size() < size_before_erase) {
       if (!last_frame_presentation_timestamp_.is_null() &&
-          (safe_deadline_for_frame < feedback.timestamp)) {
+          (safe_deadline_for_frame >= feedback.timestamp)) {
         DCHECK_LE(main_throughput().frames_ontime,
                   main_throughput().frames_produced)
             << TRACKER_DCHECK_MSG;
+        {
+          TRACE_EVENT1("cc", "main_throughput().frames_ontime++",
+                       "frames_ontime", main_throughput().frames_ontime + 1);
+        }
         ++main_throughput().frames_ontime;
       }
     }
@@ -555,6 +658,10 @@ void FrameSequenceTracker::ReportFramePresented(
       constexpr base::TimeDelta kEpsilon = base::Milliseconds(1);
       int64_t frames = (difference + kEpsilon).IntDiv(interval);
       metrics_->add_checkerboarded_frames(frames);
+      auto value = std::make_unique<base::trace_event::TracedValue>();
+      value->SetInteger("count", frames);
+      TRACE_EVENT1("cc", "metrics_->add_checkerboarded_framesKY", "value",
+                   std::move(value));
     }
 
     const bool frame_had_checkerboarding =

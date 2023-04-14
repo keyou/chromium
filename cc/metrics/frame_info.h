@@ -43,6 +43,7 @@ struct CC_EXPORT FrameInfo {
     kSmoothMain,
     kSmoothBoth
   };
+  // 在一帧中的所有
   SmoothThread smooth_thread = SmoothThread::kSmoothNone;
 
   enum class MainThreadResponse {
@@ -79,6 +80,10 @@ struct CC_EXPORT FrameInfo {
   bool compositor_update_was_dropped = false;
   bool main_update_was_dropped = false;
 };
+
+const char* ToString(FrameInfo::SmoothEffectDrivingThread type);
+const char* ToString(FrameInfo::SmoothThread smooth_thread);
+const char* ToString(FrameInfo::FrameFinalState state);
 
 }  // namespace cc
 

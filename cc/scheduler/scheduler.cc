@@ -255,6 +255,7 @@ void Scheduler::DidPrepareTiles() {
 void Scheduler::DidPresentCompositorFrame(
     uint32_t frame_token,
     const viz::FrameTimingDetails& details) {
+  TRACE_EVENT0("cc", "Scheduler::DidPresentCompositorFrameKY");
   compositor_frame_reporting_controller_->DidPresentCompositorFrame(frame_token,
                                                                     details);
 }

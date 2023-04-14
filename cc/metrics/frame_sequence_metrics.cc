@@ -188,6 +188,13 @@ SmoothEffectDrivingThread FrameSequenceMetrics::GetEffectiveThread() const {
 
 void FrameSequenceMetrics::Merge(
     std::unique_ptr<FrameSequenceMetrics> metrics) {
+  auto value = ThroughputData::ToTracedValue(
+      impl_throughput(), main_throughput(), GetEffectiveThread());
+  value->SetInteger("checkboard", frames_checkerboarded());
+  value->SetPointer("this", (void*)this);
+  value->SetString(
+      "type", FrameSequenceTracker::GetFrameSequenceTrackerTypeName(type()));
+
   // Merging custom trackers are not supported.
   DCHECK_NE(type_, FrameSequenceTrackerType::kCustom);
   DCHECK_EQ(type_, metrics->type_);
@@ -204,6 +211,16 @@ void FrameSequenceMetrics::Merge(
 
   if (jank_reporter_)
     jank_reporter_->Merge(std::move(metrics->jank_reporter_));
+
+  auto value2 = ThroughputData::ToTracedValue(
+      impl_throughput(), main_throughput(), GetEffectiveThread());
+  value2->SetInteger("checkboard", frames_checkerboarded());
+  value2->SetPointer("this", (void*)this);
+  value2->SetString(
+      "type", FrameSequenceTracker::GetFrameSequenceTrackerTypeName(type()));
+
+  TRACE_EVENT2("cc", "FrameSequenceMetrics::MergeKY", "old_value",
+               std::move(value), "new_value", std::move(value2));
 
   // Reset the state of |metrics| before destroying it, so that it doesn't end
   // up reporting the metrics.
@@ -231,6 +248,7 @@ void FrameSequenceMetrics::AdoptTrace(FrameSequenceMetrics* adopt_from) {
 }
 
 void FrameSequenceMetrics::AdvanceTrace(base::TimeTicks timestamp) {
+  TRACE_EVENT0("cc", "FrameSequenceMetrics::AdvanceTraceKY");
   uint32_t expected = 0, dropped = 0;
   switch (GetEffectiveThread()) {
     case SmoothEffectDrivingThread::kCompositor:
@@ -294,7 +312,7 @@ void FrameSequenceMetrics::ReportMetrics() {
                       : std::ceil(100. * v2_.frames_dropped /
                                   static_cast<double>(v2_.frames_expected));
     auto value = std::make_unique<base::trace_event::TracedValue>();
-    value->SetInteger("percent", percent);
+    value->SetInteger("frames_dropped_percent", percent);
     value->SetInteger("v2_.frames_dropped", v2_.frames_dropped);
     value->SetInteger("v2_.frames_expected", v2_.frames_expected);
     TRACE_EVENT1("cc", "PercentDroppedFrames2ZK", "value", std::move(value));
@@ -333,7 +351,7 @@ void FrameSequenceMetrics::ReportMetrics() {
                                   static_cast<double>(v3_.frames_expected));
 
     auto value = std::make_unique<base::trace_event::TracedValue>();
-    value->SetInteger("percent", percent);
+    value->SetInteger("frames_dropped_percent", percent);
     value->SetInteger("v3_.frames_dropped", v3_.frames_dropped);
     value->SetInteger("v3_.frames_expected", v3_.frames_expected);
     TRACE_EVENT1("cc", "PercentDroppedFrames3ZK", "value", std::move(value));
@@ -404,10 +422,39 @@ void FrameSequenceMetrics::ReportMetrics() {
                       impl_throughput_percent_missed.value_or(0));
     value->SetInteger("main_throughput_percent_dropped",
                       main_throughput_percent_dropped.value_or(0));
-    value->SetInteger("main_throughput_percent_dropped",
-                      main_throughput_percent_dropped.value_or(0));
-    TRACE_EVENT1("cc", "xx_thread_throughput_percentZK", "value",
-                 std::move(value));
+    value->SetInteger("main_throughput_percent_missed",
+                      main_throughput_percent_missed.value_or(0));
+    value->SetBoolean("compositor_report", compositor_report);
+    value->SetBoolean("main_report", main_report);
+    value->SetInteger("frames_checkerboarded_", frames_checkerboarded_);
+    value->SetInteger(
+        "checkerboard_percent",
+        frames_checkerboarded_ * 100 / impl_throughput().frames_expected);
+
+    value->SetString("effective_thread", ToString(GetEffectiveThread()));
+    value->SetString(
+        "type", FrameSequenceTracker::GetFrameSequenceTrackerTypeName(type()));
+    value->SetInteger("impl_frames_expected",
+                      impl_throughput().frames_expected);
+    value->SetInteger("impl_frames_produced",
+                      impl_throughput().frames_produced);
+    value->SetInteger("impl_frames_ontime", impl_throughput().frames_ontime);
+    value->SetInteger("main_frames_expected",
+                      main_throughput().frames_expected);
+    value->SetInteger("main_frames_produced",
+                      main_throughput().frames_produced);
+    value->SetInteger("main_frames_ontime", main_throughput().frames_ontime);
+
+    value->SetInteger("impl_drop_percent",
+                      impl_throughput().DroppedFramePercent());
+    value->SetInteger("impl_miss_percent",
+                      impl_throughput().MissedDeadlineFramePercent());
+    value->SetInteger("main_drop_percent",
+                      main_throughput().DroppedFramePercent());
+    value->SetInteger("main_miss_percent",
+                      main_throughput().MissedDeadlineFramePercent());
+
+    TRACE_EVENT1("cc", "throughput_resultZK", "value", std::move(value));
   }
   // Report for the 'scrolling thread' for the scrolling interactions.
   if (scrolling_thread_ != SmoothEffectDrivingThread::kUnknown) {
@@ -520,10 +567,11 @@ void FrameSequenceMetrics::ComputeJank(SmoothEffectDrivingThread thread_type,
                                        uint32_t frame_token,
                                        base::TimeTicks presentation_time,
                                        base::TimeDelta frame_interval) {
-  TRACE_EVENT1("cc", "FrameSequenceMetrics::ComputeJankZK", "thread_type",
-               thread_type);
   if (!jank_reporter_)
     return;
+  TRACE_EVENT2("cc", "FrameSequenceMetrics::ComputeJankZK", "thread_type",
+               ToString(thread_type), "jank_reporter_->thread_type()",
+               ToString(jank_reporter_->thread_type()));
 
   if (thread_type == jank_reporter_->thread_type())
     jank_reporter_->AddPresentedFrame(frame_token, presentation_time,
@@ -677,6 +725,12 @@ int FrameSequenceMetrics::ThroughputData::
       ShouldReportForAnimation(sequence_type, thread_type);
   const bool is_interaction = ShouldReportForInteraction(
       metrics->type(), thread_type, metrics->GetEffectiveThread());
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("miss_percent", percent);
+  value->SetBoolean("is_animation", is_animation);
+  value->SetBoolean("is_interaction", is_interaction);
+  TRACE_EVENT1("cc", "ReportMissedDeadlineFramePercentHistogramKY", "value",
+               std::move(value));
 
   if (is_animation) {
     TRACE_EVENT_INSTANT2(
@@ -777,8 +831,20 @@ FrameSequenceMetrics::TraceData::~TraceData() = default;
 void FrameSequenceMetrics::TraceData::Terminate() {
   if (!enabled || !trace_id)
     return;
+  auto value2 = ThroughputData::ToTracedValue(metrics->impl_throughput(),
+                                              metrics->main_throughput(),
+                                              metrics->GetEffectiveThread());
+  value2->SetInteger("checkboard", metrics->frames_checkerboarded());
+  value2->SetPointer("this", (void*)this);
+  value2->SetPointer("metrics", (void*)metrics);
+  value2->SetString(
+      "type",
+      FrameSequenceTracker::GetFrameSequenceTrackerTypeName(metrics->type()));
+  TRACE_EVENT1("cc", "FrameSequenceMetrics::TraceData::TerminateKY", "value",
+               std::move(value2));
   TRACE_EVENT_NESTABLE_ASYNC_END2(
-      "cc,benchmark", "FrameSequenceTracker", TRACE_ID_LOCAL(trace_id), "args",
+      "cc,benchmark", "FrameSequenceTrackerKY", TRACE_ID_LOCAL(trace_id),
+      "args",
       ThroughputData::ToTracedValue(metrics->impl_throughput(),
                                     metrics->main_throughput(),
                                     metrics->GetEffectiveThread()),
@@ -793,18 +859,50 @@ void FrameSequenceMetrics::TraceData::Advance(base::TimeTicks new_timestamp,
     return;
   if (!trace_id) {
     trace_id = this;
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
-        "cc,benchmark", "FrameSequenceTracker", TRACE_ID_LOCAL(trace_id),
-        this->last_timestamp, "name",
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetString(
+        "type",
         FrameSequenceTracker::GetFrameSequenceTrackerTypeName(metrics->type()));
+    value->SetString("EffectiveThread",
+                     ToString(metrics->GetEffectiveThread()));
+    TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
+        "cc,benchmark", "FrameSequenceTrackerKY", TRACE_ID_LOCAL(trace_id),
+        this->last_timestamp, "value", std::move(value));
+  }
+  auto value = ThroughputData::ToTracedValue(metrics->impl_throughput(),
+                                             metrics->main_throughput(),
+                                             metrics->GetEffectiveThread());
+  value->SetInteger("checkboard", metrics->frames_checkerboarded());
+  value->SetString(
+      "type",
+      FrameSequenceTracker::GetFrameSequenceTrackerTypeName(metrics->type()));
+  TRACE_EVENT1("cc", "FrameSequenceMetrics::TraceData::AdvanceKY", "value",
+               std::move(value));
+
+  auto value2 = ThroughputData::ToTracedValue(metrics->impl_throughput(),
+                                              metrics->main_throughput(),
+                                              metrics->GetEffectiveThread());
+  value2->SetInteger("checkboard", metrics->frames_checkerboarded());
+  value2->SetPointer("this", (void*)this);
+  value2->SetPointer("metrics", (void*)metrics);
+  value2->SetString(
+      "type",
+      FrameSequenceTracker::GetFrameSequenceTrackerTypeName(metrics->type()));
+  if (metrics->GetEffectiveThread() == SmoothEffectDrivingThread::kMain) {
+    value2->SetValue("implKY",
+                     ThroughputData::ToTracedValue(
+                         metrics->impl_throughput(), metrics->main_throughput(),
+                         SmoothEffectDrivingThread::kCompositor)
+                         .get());
   }
   // Use different names, because otherwise the trace-viewer shows the slices in
   // the same color, and that makes it difficult to tell the traces apart from
   // each other.
-  const char* trace_names[] = {"Frame", "Frame ", "Frame   "};
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
+  const char* trace_names[] = {"FrameKY", "FrameKY ", "FrameKY   "};
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
       "cc,benchmark", trace_names[++this->frame_count % 3],
-      TRACE_ID_LOCAL(trace_id), this->last_timestamp);
+      TRACE_ID_LOCAL(trace_id), this->last_timestamp, "value",
+      std::move(value2));
   TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP2(
       "cc,benchmark", trace_names[this->frame_count % 3],
       TRACE_ID_LOCAL(trace_id), new_timestamp, "expected", expected, "dropped",

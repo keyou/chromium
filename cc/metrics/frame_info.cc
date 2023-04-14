@@ -9,6 +9,9 @@
 #include "base/check.h"
 #include "build/build_config.h"
 
+#include "base/trace_event/trace_event.h"
+#include "base/trace_event/traced_value.h"
+
 namespace cc {
 
 namespace {
@@ -135,6 +138,27 @@ void FrameInfo::MergeWith(const FrameInfo& other) {
 
   // Validate the state after the merge.
   DCHECK(Validate());
+
+  auto& info = *this;
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetString("final_state", ToString(info.final_state));
+  value->SetBoolean("has_missing_content", info.has_missing_content);
+  value->SetInteger("main_thread_response(kMissing=1)",
+                    static_cast<int>(info.main_thread_response));
+  value->SetString("scroll_thread", ToString(info.scroll_thread));
+  value->SetString("smooth_thread", ToString(info.smooth_thread));
+  value->SetInteger("total_latency", info.total_latency.InMicroseconds());
+  value->SetBoolean("IsDroppedAffectingSmoothness",
+                    info.IsDroppedAffectingSmoothness());
+  value->SetBoolean("WasSmoothMainUpdateExpected",
+                    info.WasSmoothMainUpdateExpected());
+  value->SetBoolean("WasSmoothMainUpdateDropped",
+                    info.WasSmoothMainUpdateDropped());
+  value->SetBoolean("WasSmoothCompositorUpdateDropped",
+                    info.WasSmoothCompositorUpdateDropped());
+  value->SetBoolean("IsScrollPrioritizeFrameDropped",
+                    info.IsScrollPrioritizeFrameDropped());
+  TRACE_EVENT1("cc", "FrameInfo::MergeWithKY", "result", std::move(value));
 }
 
 bool FrameInfo::Validate() const {
@@ -201,5 +225,44 @@ bool FrameInfo::IsScrollPrioritizeFrameDropped() const {
       return IsDroppedAffectingSmoothness();
   }
 }
+const char* ToString(FrameInfo::SmoothEffectDrivingThread type) {
+  switch (type) {
+    case FrameInfo::SmoothEffectDrivingThread::kCompositor:
+      return "Compositor(1)";
+    case FrameInfo::SmoothEffectDrivingThread::kMain:
+      return "Main(0)";
+    default:
+      return "UnKnown(2)";
+  }
+}
 
+const char* ToString(FrameInfo::SmoothThread smooth_thread) {
+  switch (smooth_thread) {
+    case FrameInfo::SmoothThread::kSmoothNone:
+      return "kSmoothNone(0)";
+    case FrameInfo::SmoothThread::kSmoothCompositor:
+      return "kSmoothCompositor(1)";
+    case FrameInfo::SmoothThread::kSmoothMain:
+      return "kSmoothMain(2)";
+    case FrameInfo::SmoothThread::kSmoothBoth:
+      return "kSmoothBoth(3)";
+    default:
+      return "";
+  }
+}
+
+const char* ToString(FrameInfo::FrameFinalState state) {
+  switch (state) {
+    case FrameInfo::FrameFinalState::kNoUpdateDesired:
+      return "kNoUpdateDesired(0)";
+    case FrameInfo::FrameFinalState::kDropped:
+      return "kDropped(1)";
+    case FrameInfo::FrameFinalState::kPresentedAll:
+      return "kPresentedAll(2)";
+    case FrameInfo::FrameFinalState::kPresentedPartialOldMain:
+      return "kPresentedPartialOldMain(3)";
+    case FrameInfo::FrameFinalState::kPresentedPartialNewMain:
+      return "kPresentedPartialNewMain(4)";
+  }
+}
 }  // namespace cc
