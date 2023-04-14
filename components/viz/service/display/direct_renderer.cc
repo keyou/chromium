@@ -387,10 +387,14 @@ void DirectRenderer::DrawFrame(
 #endif
   }
 
+  // LOG(ERROR) << "keyou: render_pass_list.size: "
+  //            << render_passes_in_draw_order->size();
+  // int index = 0;
   // Draw all non-root render passes except for the root render pass.
   for (const auto& pass : *render_passes_in_draw_order) {
     if (pass.get() == root_render_pass)
       break;
+    // LOG(ERROR) << "keyou: index: " << index++;
     DrawRenderPassAndExecuteCopyRequests(pass.get());
   }
 
@@ -785,6 +789,11 @@ void DirectRenderer::UseRenderPass(const AggregatedRenderPass* render_pass) {
   }
 
   gfx::Size size = render_pass->output_rect.size();
+
+  // LOG(ERROR) << "keyou: render_pass_list.size: "
+  //            << "draw size: " << size.ToString() << ", id: " <<
+  //            render_pass->id;
+
   // We should not change the buffer size for the root render pass.
   if (!is_root) {
     size = CalculateTextureSizeForRenderPass(render_pass);

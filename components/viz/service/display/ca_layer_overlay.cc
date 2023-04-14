@@ -508,7 +508,7 @@ bool CALayerOverlayProcessor::ProcessForCALayerOverlays(
     SaveCALayerResult(result);
     return false;
   }
-
+  return false;
   // Start overlay processing
   ca_layer_overlays->reserve(num_visible_quads);
 

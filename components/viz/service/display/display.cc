@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <utility>
 
 #include "base/containers/contains.h"
@@ -63,6 +64,11 @@
 #include "ui/gfx/overlay_transform_utils.h"
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/gfx/swap_result.h"
+
+#include "components/viz/common/frame_sinks/copy_output_util.h"
+#include "third_party/skia/include/core/SkEncodedImageFormat.h"
+#include "third_party/skia/include/core/SkImageEncoder.h"
+#include "third_party/skia/include/core/SkStream.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "ui/gfx/android/android_surface_control_compat.h"
@@ -255,6 +261,49 @@ void IssueDisplayRenderingStatsEvent() {
 }
 
 }  // namespace
+
+void CopyRequestCallbackOnGpuThreadKY(
+    const gfx::Rect& demage_rect,
+    std::unique_ptr<CopyOutputResult> result) {
+  static size_t index = 100000;
+  index++;
+  std::stringstream ss;
+  ss << "/tmp/output-chromium/viz_" << index << "_" << demage_rect.ToString()
+     << ".png";
+  std::string filename = ss.str();
+  TRACE_EVENT1("gpu", "CopyRequestCallbackOnGpuThreadKY", "filename", filename);
+  if (result->IsEmpty()) {
+    return;
+  }
+
+  auto scoped_bitmap = result->ScopedAccessSkBitmap();
+  auto bitmap = scoped_bitmap.bitmap();
+  SkFILEWStream stream(filename.c_str());
+  auto is_success =
+      SkEncodeImage(&stream, bitmap, SkEncodedImageFormat::kPNG, 10);
+  stream.flush();
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetBoolean("is_success", is_success);
+  value->SetString("demage_rect", demage_rect.ToString());
+  value->SetInteger("computeByteSize", bitmap.computeByteSize());
+  value->SetInteger("dimension-width", bitmap.dimensions().width());
+  value->SetInteger("dimension-height", bitmap.dimensions().height());
+  TRACE_EVENT1("gpu", "OutputKY", "value", std::move(value));
+
+  // EXPECT_EQ(result_bitmap.width(), output_rect.width());
+  // EXPECT_EQ(result_bitmap.height(), output_rect.height());
+
+  // SkBitmap expected;
+  // expected.allocPixels(SkImageInfo::MakeN32Premul(
+  //     output_rect.width(), output_rect.height(),
+  //     color_space.ToSkColorSpace()));
+  // expected.eraseColor(kOutputColor);
+
+  // EXPECT_TRUE(cc::MatchesBitmap(result_bitmap, expected,
+  //                               cc::ExactPixelComparator(false)));
+
+  // UnblockMainThread();
+}
 
 constexpr base::TimeDelta Display::kDrawToSwapMin;
 constexpr base::TimeDelta Display::kDrawToSwapMax;
@@ -841,6 +890,26 @@ bool Display::DrawAndSwap(const DrawAndSwapParams& params) {
     overlay_processor_->SetFrameSequenceNumber(frame_sequence_number_);
     overlay_processor_->SetIsVideoCaptureEnabled(frame.video_capture_enabled);
     overlay_processor_->SetIsPageFullscreen(frame.page_fullscreen_mode);
+
+    {
+      static size_t step = 0;
+      step++;
+      if (step % 10 == 0) {
+      }
+      // Copy the output
+      // auto request = std::make_unique<CopyOutputRequest>(
+      //     CopyOutputRequest::ResultFormat::RGBA,
+      //     CopyOutputRequest::ResultDestination::kSystemMemory,
+      //     base::BindOnce(&CopyRequestCallbackOnGpuThreadKY,
+      //                    last_render_pass.damage_rect));
+      // // request->set_result_task_runner();
+
+      // // frame.render_pass_list.back()->copy_requests.push_back(
+      // //     std::move(request));
+      // frame.render_pass_list.front()->copy_requests.push_back(
+      //     std::move(request));
+    }
+
     renderer_->DrawFrame(&frame.render_pass_list, device_scale_factor_,
                          current_surface_size, display_color_spaces_,
                          std::move(frame.surface_damage_rect_list_));

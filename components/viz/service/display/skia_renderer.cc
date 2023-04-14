@@ -90,6 +90,8 @@
 #include "ui/gfx/geometry/transform_util.h"
 #include "ui/gfx/gpu_fence_handle.h"
 
+#include "base/trace_event/traced_value.h"
+
 namespace viz {
 
 namespace {
@@ -2500,12 +2502,16 @@ void SkiaRenderer::DrawTextureQuad(const TextureDrawQuad* quad,
 void SkiaRenderer::DrawTileDrawQuad(const TileDrawQuad* quad,
                                     const DrawRPDQParams* rpdq_params,
                                     DrawQuadParams* params) {
-  TRACE_EVENT0("viz", "SkiaRenderer::DrawTileDrawQuad");
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  quad->AsValueInto(value.get());
+  TRACE_EVENT1("viz", "SkiaRenderer::DrawTileDrawQuad", "value",
+               std::move(value));
   DCHECK(!MustFlushBatchedQuads(quad, rpdq_params, *params));
   // |resource_provider()| can be NULL in resourceless software draws, which
   // should never produce tile quads in the first place.
   DCHECK(resource_provider());
-
+  // DrawColoredQuad(SkColors::kRed, rpdq_params, params);
+  // return;
   // If quad->ShouldDrawWithBlending() is true, we need to raster tile paint ops
   // to an offscreen texture first, and then blend it with content behind the
   // tile. Since a tile could be used cross frames, so it would better to not
