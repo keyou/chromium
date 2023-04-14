@@ -257,6 +257,8 @@ void FrameSequenceMetrics::ReportMetrics() {
   DCHECK_LE(impl_throughput_.frames_ontime, impl_throughput_.frames_expected);
   DCHECK_LE(main_throughput_.frames_ontime, main_throughput_.frames_expected);
 
+  TRACE_EVENT0("cc", "FrameSequenceMetrics::ReportMetricsKY");
+
   // Terminates |trace_data_| for all types of FrameSequenceTracker.
   trace_data_.Terminate();
 
@@ -291,7 +293,11 @@ void FrameSequenceMetrics::ReportMetrics() {
                       ? 0
                       : std::ceil(100. * v2_.frames_dropped /
                                   static_cast<double>(v2_.frames_expected));
-
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetInteger("percent", percent);
+    value->SetInteger("v2_.frames_dropped", v2_.frames_dropped);
+    value->SetInteger("v2_.frames_expected", v2_.frames_expected);
+    TRACE_EVENT1("cc", "PercentDroppedFrames2ZK", "value", std::move(value));
     if (is_animation) {
       UMA_HISTOGRAM_PERCENTAGE(
           "Graphics.Smoothness.PercentDroppedFrames2.AllAnimations", percent);
@@ -326,6 +332,11 @@ void FrameSequenceMetrics::ReportMetrics() {
                       : std::ceil(100. * v3_.frames_dropped /
                                   static_cast<double>(v3_.frames_expected));
 
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetInteger("percent", percent);
+    value->SetInteger("v3_.frames_dropped", v3_.frames_dropped);
+    value->SetInteger("v3_.frames_expected", v3_.frames_expected);
+    TRACE_EVENT1("cc", "PercentDroppedFrames3ZK", "value", std::move(value));
     if (is_animation) {
       UMA_HISTOGRAM_PERCENTAGE(
           "Graphics.Smoothness.PercentDroppedFrames3.AllAnimations", percent);
@@ -385,7 +396,19 @@ void FrameSequenceMetrics::ReportMetrics() {
             GetIndexForMetric(SmoothEffectDrivingThread::kMain, type_),
             main_throughput_);
   }
-
+  {
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetInteger("impl_throughput_percent_dropped",
+                      impl_throughput_percent_dropped.value_or(0));
+    value->SetInteger("impl_throughput_percent_missed",
+                      impl_throughput_percent_missed.value_or(0));
+    value->SetInteger("main_throughput_percent_dropped",
+                      main_throughput_percent_dropped.value_or(0));
+    value->SetInteger("main_throughput_percent_dropped",
+                      main_throughput_percent_dropped.value_or(0));
+    TRACE_EVENT1("cc", "xx_thread_throughput_percentZK", "value",
+                 std::move(value));
+  }
   // Report for the 'scrolling thread' for the scrolling interactions.
   if (scrolling_thread_ != SmoothEffectDrivingThread::kUnknown) {
     absl::optional<int> scrolling_thread_throughput_dropped;
@@ -408,6 +431,13 @@ void FrameSequenceMetrics::ReportMetrics() {
     // since the input-params to the function never change at runtime.
     if (scrolling_thread_throughput_dropped.has_value() &&
         scrolling_thread_throughput_missed.has_value()) {
+      auto value = std::make_unique<base::trace_event::TracedValue>();
+      value->SetInteger("scrolling_thread_throughput_dropped",
+                        scrolling_thread_throughput_dropped.value_or(0));
+      value->SetInteger("scrolling_thread_throughput_missed",
+                        scrolling_thread_throughput_missed.value_or(0));
+      TRACE_EVENT1("cc", "scrolling_thread_throughput_percentZK", "value",
+                   std::move(value));
       if (type_ == FrameSequenceTrackerType::kWheelScroll) {
         UMA_HISTOGRAM_PERCENTAGE(
             GetThroughputHistogramName(FrameSequenceTrackerType::kWheelScroll,
@@ -444,6 +474,13 @@ void FrameSequenceMetrics::ReportMetrics() {
   if (impl_throughput_.frames_expected >= kMinFramesForThroughputMetric) {
     const int checkerboarding_percent = static_cast<int>(
         100 * frames_checkerboarded_ / impl_throughput_.frames_expected);
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetInteger("checkerboarding_percent", checkerboarding_percent);
+    value->SetInteger("frames_checkerboarded_", frames_checkerboarded_);
+    value->SetInteger("impl_throughput_.frames_expected",
+                      impl_throughput_.frames_expected);
+    TRACE_EVENT1("cc", "scrolling_thread_throughput_percentZK", "value",
+                 std::move(value));
     STATIC_HISTOGRAM_POINTER_GROUP(
         GetCheckerboardingHistogramName(type_), static_cast<int>(type_),
         static_cast<int>(FrameSequenceTrackerType::kMaxType),
@@ -483,6 +520,8 @@ void FrameSequenceMetrics::ComputeJank(SmoothEffectDrivingThread thread_type,
                                        uint32_t frame_token,
                                        base::TimeTicks presentation_time,
                                        base::TimeDelta frame_interval) {
+  TRACE_EVENT1("cc", "FrameSequenceMetrics::ComputeJankZK", "thread_type",
+               thread_type);
   if (!jank_reporter_)
     return;
 

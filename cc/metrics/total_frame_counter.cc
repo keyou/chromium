@@ -7,6 +7,7 @@
 #include <cmath>
 
 #include "base/logging.h"
+#include "base/trace_event/trace_event.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 
 namespace cc {
@@ -54,6 +55,8 @@ void TotalFrameCounter::Reset() {
 void TotalFrameCounter::UpdateTotalFramesSinceLastVisible(
     base::TimeTicks until) {
   total_frames_ = ComputeTotalVisibleFrames(until);
+  TRACE_EVENT1("cc", "TotalFrameCounter::UpdateTotalFramesSinceLastVisibleKY",
+               "total_frames_", total_frames_);
 }
 
 size_t TotalFrameCounter::ComputeTotalVisibleFrames(

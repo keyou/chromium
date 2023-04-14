@@ -187,6 +187,17 @@ void JankMetrics::AddPresentedFrame(
                                                   last_presentation_timestamp_ -
                                                   no_update_time;
 
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("presented_frame_token", presented_frame_token);
+  value->SetInteger("current_presentation_timestamp",
+                    current_presentation_timestamp.ToInternalValue());
+  value->SetInteger("frame_interval", frame_interval.InMicroseconds());
+  value->SetInteger("current_frame_delta",
+                    current_frame_delta.InMicroseconds());
+  value->SetInteger("prev_frame_delta_", prev_frame_delta_.InMicroseconds());
+  TRACE_EVENT1("cc", "JankMetrics::AddPresentedFrameZK", "value",
+               std::move(value));
+
   // Guard against the situation when the physical presentation interval is
   // shorter than |no_update_time|. For example, consider two BeginFrames A and
   // B separated by 5 vsync cycles of no-updates (i.e. |no_update_time| = 5
@@ -227,15 +238,21 @@ void JankMetrics::AddPresentedFrame(
     if (!prev_frame_delta_.is_zero() &&
         current_frame_delta > prev_frame_delta_ + 0.5 * frame_interval) {
       jank_count_++;
-
+      auto value = std::make_unique<base::trace_event::TracedValue>();
+      value->SetInteger("prev_frame_delta_",
+                        prev_frame_delta_.InMicroseconds());
+      value->SetInteger("current_frame_delta",
+                        current_frame_delta.InMicroseconds());
+      value->SetInteger("frame_interval", frame_interval.InMicroseconds());
       TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
           "cc,benchmark", "Jank", TRACE_ID_LOCAL(this),
           last_presentation_timestamp_, "thread-type",
           GetJankThreadTypeName(effective_thread_));
-      TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP1(
+      TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP2(
           "cc,benchmark", "Jank", TRACE_ID_LOCAL(this),
           current_presentation_timestamp, "tracker-type",
-          FrameSequenceTracker::GetFrameSequenceTrackerTypeName(tracker_type_));
+          FrameSequenceTracker::GetFrameSequenceTrackerTypeName(tracker_type_),
+          "paramsZK", std::move(value));
     }
   }
   last_presentation_timestamp_ = current_presentation_timestamp;
@@ -250,6 +267,15 @@ void JankMetrics::ReportJankMetrics(int frames_expected) {
   int jank_percent = static_cast<int>(100 * jank_count_ / frames_expected);
 
   const char* jank_thread_name = GetJankThreadTypeName(effective_thread_);
+
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("frames_expected", frames_expected);
+  value->SetInteger("jank_percent", jank_percent);
+  value->SetString("jank_thread_name", jank_thread_name);
+  value->SetString("GetJankHistogramName",
+                   GetJankHistogramName(tracker_type_, jank_thread_name));
+  TRACE_EVENT1("cc", "JankMetrics::ReportJankMetricsZK", "value",
+               std::move(value));
 
   STATIC_HISTOGRAM_POINTER_GROUP(
       GetJankHistogramName(tracker_type_, jank_thread_name),

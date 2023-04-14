@@ -732,6 +732,7 @@ EventMetrics::List CompositorFrameReporter::TakeMainBlockedEventsMetrics() {
 }
 
 void CompositorFrameReporter::TerminateReporter() {
+  TRACE_EVENT0("cc", "CompositorFrameReporter::TerminateReporterKY");
   if (frame_termination_status_ == FrameTerminationStatus::kUnknown)
     TerminateFrame(FrameTerminationStatus::kUnknown, Now());
 
@@ -793,7 +794,8 @@ void CompositorFrameReporter::TerminateReporter() {
     if (TestReportType(FrameReportType::kNonDroppedFrame))
       ReportEventLatencyMetrics();
   }
-
+  TRACE_EVENT1("cc", "dropped_frame_counterKY", "dropped_frame_counter",
+               (void*)global_trackers_.dropped_frame_counter.get());
   if (TestReportType(FrameReportType::kDroppedFrame)) {
     global_trackers_.dropped_frame_counter->AddDroppedFrame();
   } else {
@@ -814,6 +816,8 @@ void CompositorFrameReporter::EndCurrentStage(base::TimeTicks end_time) {
 }
 
 void CompositorFrameReporter::ReportCompositorLatencyMetrics() const {
+  TRACE_EVENT0("cc",
+               "CompositorFrameReporter::ReportCompositorLatencyMetricsKY");
   if (!base::ShouldLogHistogramForCpuReductionExperiment())
     return;
 
@@ -972,6 +976,8 @@ void CompositorFrameReporter::ReportCompositorLatencyHistogram(
              StageType::kSubmitCompositorFrameToPresentationCompositorFrame);
   DCHECK(!blink_breakdown ||
          stage_type == StageType::kSendBeginMainFrameToCommit);
+  TRACE_EVENT0("cc",
+               "CompositorFrameReporter::ReportCompositorLatencyHistogramKY");
   for (size_t type = 0; type < report_types_.size(); ++type) {
     if (!report_types_.test(type))
       continue;
@@ -1021,6 +1027,7 @@ void CompositorFrameReporter::ReportCompositorLatencyHistogram(
 void CompositorFrameReporter::ReportEventLatencyMetrics() const {
   const StageData& total_latency_stage = stage_history_.back();
   DCHECK_EQ(StageType::kTotalLatency, total_latency_stage.stage_type);
+  TRACE_EVENT0("cc", "CompositorFrameReporter::ReportEventLatencyMetricsKY");
 
   if (global_trackers_.latency_ukm_reporter) {
     global_trackers_.latency_ukm_reporter->ReportEventLatencyUkm(
@@ -1117,7 +1124,8 @@ void CompositorFrameReporter::ReportCompositorLatencyTraceEvents(
     const FrameInfo& info) const {
   if (stage_history_.empty())
     return;
-
+  TRACE_EVENT0("cc",
+               "CompositorFrameReporter::ReportCompositorLatencyTraceEventsKY");
   if (info.IsDroppedAffectingSmoothness()) {
     devtools_instrumentation::DidDropSmoothnessFrame(
         layer_tree_host_id_, args_.frame_time, args_.frame_id.sequence_number,
@@ -1285,6 +1293,8 @@ void CompositorFrameReporter::ReportCompositorLatencyTraceEvents(
 }
 
 void CompositorFrameReporter::ReportEventLatencyTraceEvents() const {
+  TRACE_EVENT0("cc",
+               "CompositorFrameReporter::ReportEventLatencyTraceEventsKY");
   // TODO(mohsen): This function is becoming large and there is concerns about
   // having this in the compositor critical path. crbug.com/1072740 is
   // considering doing the reporting off-thread, but as a short-term solution,
@@ -1628,6 +1638,7 @@ base::WeakPtr<CompositorFrameReporter> CompositorFrameReporter::GetWeakPtr() {
 }
 
 FrameInfo CompositorFrameReporter::GenerateFrameInfo() const {
+  TRACE_EVENT0("cc", "CompositorFrameReporter::GenerateFrameInfoKY");
   FrameFinalState final_state = FrameFinalState::kNoUpdateDesired;
   auto smooth_thread = smooth_thread_;
   auto scrolling_thread = scrolling_thread_;

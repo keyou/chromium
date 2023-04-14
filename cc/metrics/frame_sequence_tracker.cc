@@ -16,6 +16,7 @@
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
+#include "base/trace_event/common/trace_event_common.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
@@ -92,6 +93,10 @@ FrameSequenceTracker::FrameSequenceTracker(
                                                  throughput_ukm_reporter)) {
   DCHECK_LT(type, FrameSequenceTrackerType::kMaxType);
   DCHECK(type != FrameSequenceTrackerType::kCustom);
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetString("FrameSequenceTrackerType",
+                   GetFrameSequenceTrackerTypeName(type));
+  TRACE_EVENT1("cc", "ctor::FrameSequenceTrackerZK", "value", std::move(value));
   // TODO(crbug.com/1158439): remove the trace event once the validation is
   // completed.
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
@@ -134,6 +139,7 @@ void FrameSequenceTracker::ReportBeginImplFrame(
 
   if (ShouldIgnoreBeginFrameSource(args.frame_id.source_id))
     return;
+  TRACE_EVENT0("cc", "FrameSequenceTracker::ReportBeginImplFrameZK");
 
   TRACKER_TRACE_STREAM << "b(" << args.frame_id.sequence_number % kDebugStrMod
                        << ")";
@@ -177,6 +183,7 @@ void FrameSequenceTracker::ReportBeginMainFrame(
   if (ShouldIgnoreBeginFrameSource(args.frame_id.source_id))
     return;
 
+  TRACE_EVENT0("cc", "FrameSequenceTracker::ReportBeginMainFrameZK");
   TRACKER_TRACE_STREAM << "B("
                        << begin_main_frame_data_.previous_sequence %
                               kDebugStrMod
@@ -222,7 +229,7 @@ void FrameSequenceTracker::ReportMainFrameProcessed(
 
   if (ShouldIgnoreBeginFrameSource(args.frame_id.source_id))
     return;
-
+  TRACE_EVENT0("cc", "FrameSequenceTracker::ReportMainFrameProcessedZK");
   TRACKER_TRACE_STREAM << "E(" << args.frame_id.sequence_number % kDebugStrMod
                        << ")";
 
@@ -259,6 +266,7 @@ void FrameSequenceTracker::ReportSubmitFrame(
     const viz::BeginFrameArgs& origin_args) {
   DCHECK_NE(termination_status_, TerminationStatus::kReadyForTermination);
 
+  TRACE_EVENT0("cc", "FrameSequenceTracker::ReportSubmitFrameZK");
   // TODO(crbug.com/1072482): find a proper way to terminate a tracker.
   // Right now, we define a magical number |frames_to_terminate_tracker| = 3,
   // which means that if this frame_token is more than 3 frames compared with
@@ -344,6 +352,7 @@ void FrameSequenceTracker::ReportFrameEnd(
   if (ShouldIgnoreBeginFrameSource(args.frame_id.source_id))
     return;
 
+  TRACE_EVENT0("cc", "FrameSequenceTracker::ReportFrameEndZK");
   // We only update the `pending_main_sequences` when the frame has successfully
   // submitted, or when we determine that it has no damage. See
   // ReportMainFrameCausedNoDamage. We do not do this in
@@ -429,6 +438,7 @@ void FrameSequenceTracker::ReportFrameEnd(
 void FrameSequenceTracker::ReportFramePresented(
     uint32_t frame_token,
     const gfx::PresentationFeedback& feedback) {
+  TRACE_EVENT0("cc", "FrameSequenceTracker::ReportFramePresentedZK");
   // TODO(xidachen): We should early exit if |last_submitted_frame_| = 0, as it
   // means that we are presenting the same frame_token again.
   const bool submitted_frame_since_last_presentation = !!last_submitted_frame_;
@@ -565,7 +575,7 @@ void FrameSequenceTracker::ReportImplFrameCausedNoDamage(
 
   if (ShouldIgnoreBeginFrameSource(ack.frame_id.source_id))
     return;
-
+  TRACE_EVENT0("cc", "FrameSequenceTracker::ReportImplFrameCausedNoDamageZK");
   TRACKER_TRACE_STREAM << "n(" << ack.frame_id.sequence_number % kDebugStrMod
                        << ")";
 
@@ -593,6 +603,7 @@ void FrameSequenceTracker::ReportMainFrameCausedNoDamage(
   if (ShouldIgnoreBeginFrameSource(args.frame_id.source_id))
     return;
 
+  TRACE_EVENT0("cc", "FrameSequenceTracker::ReportMainFrameCausedNoDamageZK");
   TRACKER_TRACE_STREAM << "N("
                        << begin_main_frame_data_.previous_sequence %
                               kDebugStrMod
@@ -659,6 +670,7 @@ void FrameSequenceTracker::PauseFrameProduction() {
   // the next received begin-frame. However, defer doing that until the frame
   // ends (or a new frame starts), so that in case a frame is in-progress,
   // subsequent notifications for that frame can be handled correctly.
+  TRACE_EVENT0("cc", "FrameSequenceTracker::PauseFrameProductionZK");
   TRACKER_TRACE_STREAM << 'R';
   reset_all_state_ = true;
 }
