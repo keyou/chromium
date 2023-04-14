@@ -21,11 +21,13 @@
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "base/trace_event/typed_macros.h"
 #include "components/ukm/scheme_constants.h"
 #include "components/ukm/ukm_recorder_observer.h"
 #include "components/variations/variations_associated_data.h"
+#include "perfetto/tracing/string_helpers.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_decode.h"
 #include "services/metrics/public/cpp/ukm_source.h"
@@ -215,6 +217,7 @@ UkmRecorderImpl::UkmRecorderImpl()
   max_kept_sources_ =
       static_cast<size_t>(base::GetFieldTrialParamByFeatureAsInt(
           kUkmFeature, "MaxKeptSources", max_kept_sources_));
+  recording_enabled_ = true;
 }
 
 UkmRecorderImpl::~UkmRecorderImpl() = default;
@@ -1028,10 +1031,43 @@ void UkmRecorderImpl::RecordSource(std::unique_ptr<UkmSource> source) {
   recordings_.source_counts.observed++;
   recordings_.sources.emplace(source_id, std::move(source));
 }
+std::string GetName(const ukm::builders::EntryDecoder& decoder, uint64_t hash) {
+  const auto it = decoder.metric_map.find(hash);
+  if (it == decoder.metric_map.end()) {
+    return base::StringPrintf("Unknown %" PRIu64, hash);
+  }
+  return it->second;
+}
+base::Value::Dict ConvertEntryToDict(const ukm::builders::DecodeMap& decode_map,
+                                     const mojom::UkmEntry& entry) {
+  base::Value::Dict entry_dict;
+
+  const auto it = decode_map.find(entry.event_hash);
+  if (it == decode_map.end()) {
+    entry_dict.Set("name", std::to_string(entry.event_hash));
+  } else {
+    entry_dict.Set("name", it->second.name);
+
+    base::Value::List metrics_list;
+    for (const auto& metric : entry.metrics) {
+      base::Value::Dict metric_dict;
+      metric_dict.Set("name", GetName(it->second, metric.first));
+      metric_dict.Set("value", std::to_string(metric.second));
+      metrics_list.Append(std::move(metric_dict));
+    }
+    entry_dict.Set("metrics", std::move(metrics_list));
+  }
+  return entry_dict;
+}
 
 void UkmRecorderImpl::AddEntry(mojom::UkmEntryPtr entry) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!HasUnknownMetrics(decode_map_, *entry));
+
+  auto value = ConvertEntryToDict(decode_map_, *entry);
+  auto key = *value.FindString("name");
+  TRACE_EVENT("toplevel", "UkmRecorderImpl::AddEntryKY",
+              perfetto::DynamicString{key}, std::move(value));
 
   NotifyObserversWithNewEntry(*entry);
 

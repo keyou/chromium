@@ -446,7 +446,8 @@ class DroppedFrameCounterTest : public testing::Test {
   uint64_t source_id_ = 1;
   raw_ptr<const base::TickClock> tick_clock_ =
       base::DefaultTickClock::GetInstance();
-  base::TimeTicks frame_time_ = tick_clock_->NowTicks();
+  base::TimeTicks frame_time_ = base::TimeTicks::FromInternalValue(
+      1000000000000);  // tick_clock_->NowTicks();
   base::TimeDelta interval_ = base::Microseconds(16667);  // 16.667 ms
 
   SmoothnessStrategy smoothness_strategy_;
@@ -608,6 +609,98 @@ TEST_P(SmoothnessStrategyDroppedFrameCounterTest, Percentile95WithIdleFrames) {
   EXPECT_EQ(histogram->total_count(), 100u * kFps);
   EXPECT_EQ(histogram->GetPercentDroppedFramePercentile(0.96), 0u);
   EXPECT_GT(histogram->GetPercentDroppedFramePercentile(0.97), 0u);
+}
+
+TEST_P(SmoothnessStrategyDroppedFrameCounterTest, HistogramBin) {
+  // Set an interval that rounds up nicely with 1 second.
+  constexpr auto kInterval = base::Milliseconds(200);
+  constexpr size_t kFps = base::Seconds(1) / kInterval;  // kFps = 5
+  static_assert(
+      kFps % 5 == 0,
+      "kFps must be a multiple of 5 because this test depends on it.");
+  SetInterval(kInterval);
+
+  const auto* histogram = GetSlidingWindowHistogram();
+
+  // Test 1:
+  // 10 frames, 2 seconds, the first frame is dropped.
+  SimulateFrameSequence(
+      {
+          true, false, false, false, false,   // 1s
+          false, false, false, false, false,  // 2s
+      },
+      1);
+  EXPECT_EQ(histogram->total_count(), 5u);
+  EXPECT_EQ(histogram->histogram_bins_[20], 0u);  // expect 1
+  EXPECT_EQ(histogram->histogram_bins_[0], 5u);   // expect 4
+  EXPECT_EQ(histogram->GetPercentDroppedFramePercentile(0.95),
+            0u);  // expect 20
+
+  // Test 2:
+  // 10 frames, the 2rd frame is dropped
+  dropped_frame_counter_.Reset();
+  dropped_frame_counter_.OnFcpReceived();
+  SimulateFrameSequence(
+      {
+          false, true, false, false, false,   // 1s
+          false, false, false, false, false,  // 2s
+      },
+      1);
+  EXPECT_EQ(histogram->total_count(), 5u);
+  EXPECT_EQ(histogram->histogram_bins_[20], 1u);  // expect 2
+  EXPECT_EQ(histogram->histogram_bins_[0], 4u);   // expect 3
+  EXPECT_EQ(histogram->GetPercentDroppedFramePercentile(0.95), 20u);
+
+  // Test 3:
+  // 10 frames, the 2nd and 3rd frame are idle, the 4th frame is dropped
+  dropped_frame_counter_.Reset();
+  dropped_frame_counter_.OnFcpReceived();
+  SimulateFrameSequence({false}, 1);
+  AdvancetimeByIntervals(2);
+  SimulateFrameSequence({
+                            /*false, idle, idle, */ true, false,  // 1s
+                            false, false, false, false, false,    // 2s
+                        },
+                        1);
+  EXPECT_EQ(histogram->total_count(), 3u);        // expect 5
+  EXPECT_EQ(histogram->histogram_bins_[20], 1u);  // expect 4
+  EXPECT_EQ(histogram->histogram_bins_[0], 2u);   // expect 1
+  EXPECT_EQ(histogram->GetPercentDroppedFramePercentile(0.95), 20u);
+
+  // Test 4:
+  // 10 frames, the 1st frame is dropped
+  dropped_frame_counter_.Reset();
+  dropped_frame_counter_.OnFcpReceived();
+  SimulateFrameSequence({true}, 1);
+  AdvancetimeByIntervals(2);
+  SimulateFrameSequence({
+                            /*true, idle, idle, */ false, false,  // 1s
+                            false, false, false, false, false,    // 2s
+                        },
+                        1);
+  EXPECT_EQ(histogram->total_count(), 3u);        // expect 5
+  EXPECT_EQ(histogram->histogram_bins_[20], 0u);  // expect 1
+  EXPECT_EQ(histogram->histogram_bins_[0], 3u);   // expect 4
+  EXPECT_EQ(histogram->GetPercentDroppedFramePercentile(0.95),
+            0u);  // expect 20
+
+  // Test 5:
+  // 10 frames, the 1st frame is dropped, then 6 frames is idle
+  dropped_frame_counter_.Reset();
+  dropped_frame_counter_.OnFcpReceived();
+  SimulateFrameSequence({true}, 1);
+  AdvancetimeByIntervals(6);
+  SimulateFrameSequence(
+      {
+          /*true, idle, idle, idle, idle, idle, idle,*/
+          false, false, false,  // 2s
+      },
+      1);
+  EXPECT_EQ(histogram->total_count(), 2u);        // expect 7
+  EXPECT_EQ(histogram->histogram_bins_[20], 0u);  // expect 1
+  EXPECT_EQ(histogram->histogram_bins_[0], 2u);   // expect 6
+  EXPECT_EQ(histogram->GetPercentDroppedFramePercentile(0.95),
+            0u);  // expect 20
 }
 
 TEST_P(SmoothnessStrategyDroppedFrameCounterTest,

@@ -387,6 +387,7 @@ void Scheduler::OnBeginFrameSourcePausedChanged(bool paused) {
 // If the scheduler is busy, we queue the BeginFrame to be handled later as
 // a BeginRetroFrame.
 bool Scheduler::OnBeginFrameDerivedImpl(const viz::BeginFrameArgs& args) {
+  TRACE_EVENT0("cc", "Scheduler::OnBeginFrameDerivedImplKY");
   TRACE_EVENT1("cc,benchmark", "Scheduler::BeginFrame", "args", args.AsValue());
 
   // If the begin frame interval is different than last frame and bigger than
@@ -426,6 +427,15 @@ bool Scheduler::OnBeginFrameDerivedImpl(const viz::BeginFrameArgs& args) {
 
   if (inside_process_scheduled_actions_ || inside_previous_begin_frame ||
       pending_begin_frame_args_.IsValid()) {
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetBoolean("inside_process_scheduled_actions_",
+                      inside_process_scheduled_actions_);
+    value->SetBoolean("inside_previous_begin_frame",
+                      inside_previous_begin_frame);
+    value->SetBoolean("pending_begin_frame_args_.IsValid()",
+                      pending_begin_frame_args_.IsValid());
+    TRACE_EVENT1("cc", "inside_previous_begin_frameKY", "value",
+                 std::move(value));
     // The BFS can send a begin frame while scheduler is processing previous
     // frame, or a MISSED begin frame inside the ProcessScheduledActions loop
     // when AddObserver is called. The BFS (e.g. mojo) may queue up many begin
@@ -681,6 +691,7 @@ void Scheduler::BeginImplFrame(const viz::BeginFrameArgs& args,
             SchedulerStateMachine::BeginImplFrameState::IDLE);
   DCHECK(!begin_impl_frame_deadline_timer_.IsRunning());
   DCHECK(state_machine_.HasInitializedLayerTreeFrameSink());
+  TRACE_EVENT0("cc", "Scheduler::BeginImplFrameKY");
   cc_frame_time_available_ = args.interval - kDeadlineFudgeFactor -
                              compositor_timing_history_->DrawDurationEstimate();
   cc_frame_start_ = now;

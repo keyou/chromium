@@ -54,8 +54,9 @@ class CC_EXPORT DroppedFrameCounter {
 
     uint32_t total_count() const { return total_count_; }
 
-   private:
     uint32_t histogram_bins_[101] = {0};
+
+   private:
     uint32_t smoothness_buckets_[7] = {0};
     uint32_t total_count_ = 0;
   };

@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "cc/metrics/dropped_frame_counter.h"
+#include <_types/_uint32_t.h>
+#include <sys/_types/_u_int32_t.h>
 
 #include <algorithm>
 #include <cmath>
@@ -14,6 +16,7 @@
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/ranges/algorithm.h"
+#include "base/time/time.h"
 #include "base/trace_event/common/trace_event_common.h"
 #include "base/trace_event/trace_event.h"
 #include "build/chromeos_buildflags.h"
@@ -332,6 +335,7 @@ void DroppedFrameCounter::ReportFrames() {
   DCHECK(!report_for_ui_);
   TRACE_EVENT2("cc", "DroppedFrameCounter::ReportFramesKY", "total_frames_",
                total_frames_, "this", this);
+  // 表示所有可见帧数量 = 可见时间/16.6
   const auto total_frames =
       total_counter_->ComputeTotalVisibleFrames(base::TimeTicks::Now());
   auto value1 = std::make_unique<base::trace_event::TracedValue>();
@@ -376,6 +380,8 @@ void DroppedFrameCounter::ReportFrames() {
 
   if (ukm_smoothness_data_ && total_frames > 0) {
     UkmSmoothnessData smoothness_data;
+    // 如果画面一直没有变化则这些帧也会被记入 total_frames，导致得到的
+    // avg_smoothness 不准确，这种情况下统计的 avg_smoothness 是最优情况
     smoothness_data.avg_smoothness =
         static_cast<double>(total_smoothness_dropped_) * 100 / total_frames;
     smoothness_data.worst_smoothness = sliding_window_max_percent_dropped_;
@@ -541,11 +547,18 @@ void DroppedFrameCounter::Reset() {
 }
 
 base::TimeDelta DroppedFrameCounter::ComputeCurrentWindowSize() const {
-  if (sliding_window_.empty())
+  if (sliding_window_.empty()) {
+    TRACE_EVENT1("cc", "DroppedFrameCounter::ComputeCurrentWindowSizeKY-zero",
+                 "zero", true);
     return {};
-  return sliding_window_.back().first.frame_time +
-         sliding_window_.back().first.interval -
-         sliding_window_.front().first.frame_time;
+  }
+  auto result = sliding_window_.back().first.frame_time +
+                sliding_window_.back().first.interval -
+                sliding_window_.front().first.frame_time;
+
+  TRACE_EVENT1("cc", "DroppedFrameCounter::ComputeCurrentWindowSizeKY",
+               "result", result.InMicroseconds());
+  return result;
 }
 
 void DroppedFrameCounter::NotifyFrameResult(const viz::BeginFrameArgs& args,
@@ -563,6 +576,17 @@ void DroppedFrameCounter::NotifyFrameResult(const viz::BeginFrameArgs& args,
   if (sorted_frame_callback_)
     sorted_frame_callback_->Run(args, frame_info);
 
+  {
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetString("args.frame_time",
+                     std::to_string(args.frame_time.ToInternalValue()));
+    value->SetString(
+        "now-args.frame_time",
+        std::to_string(
+            (base::TimeTicks::Now() - args.frame_time).InMicroseconds()));
+    value->SetString("args.frame_id", args.frame_id.ToString());
+    TRACE_EVENT1("cc", "sliding_window_.pushKY", "value", std::move(value));
+  }
   sliding_window_.push({args, frame_info});
   UpdateDroppedFrameCountInWindow(frame_info, 1);
 
@@ -611,6 +635,13 @@ void DroppedFrameCounter::PopSlidingWindow() {
   TRACE_EVENT1("cc", "DroppedFrameCounter::PopSlidingWindowKY", "this", this);
   const auto removed_args = sliding_window_.front().first;
   const auto removed_frame_info = sliding_window_.front().second;
+
+  // uint32_t dropped_frame_count_in_window_backup[sizeof(
+  //     dropped_frame_count_in_window_)];
+  // std::copy(std::begin(dropped_frame_count_in_window_),
+  //           std::end(dropped_frame_count_in_window_),
+  //           std::begin(dropped_frame_count_in_window_backup));
+
   UpdateDroppedFrameCountInWindow(removed_frame_info, -1);
   sliding_window_.pop();
   if (sliding_window_.empty())
@@ -640,14 +671,48 @@ void DroppedFrameCounter::PopSlidingWindow() {
   const auto last_timestamp =
       std::min(remaining_oldest_args.frame_time, max_sliding_window_start);
   const auto difference = last_timestamp - removed_args.frame_time;
+  // 如果画面在一段时间内没有变化，这些帧会被认为没有丢帧，也会统计在内。
   const size_t count = difference > max_difference
                            ? std::ceil(difference / newest_args.interval)
                            : 1;
+  // size_t count2 = 0;
+  // size_t idle_count = 0;
+  // auto removed_duration =
+  //     remaining_oldest_args.frame_time - removed_args.frame_time;
+  // if (removed_duration > sliding_window_interval_) {
+  //   count2 = total_frames_in_window_;
+  //   const auto idle_duration = removed_duration - sliding_window_interval_;
+  //   idle_count = idle_duration / remaining_oldest_args.interval;
+  // } else {
+  //   count2 = removed_duration / remaining_oldest_args.interval;
+  // }
+  value->BeginDictionary("count_compute");
+  value->SetInteger("sliding_window_.size", sliding_window_.size());
+  value->SetString("newest_args.frame_time",
+                   std::to_string(newest_args.frame_time.ToInternalValue()));
+  value->SetString(
+      "remaining_oldest_args.frame_time",
+      std::to_string(remaining_oldest_args.frame_time.ToInternalValue()));
+  value->SetString("removed_args.frame_time",
+                   std::to_string(removed_args.frame_time.ToInternalValue()));
+  value->SetString("max_sliding_window_start",
+                   std::to_string(max_sliding_window_start.ToInternalValue()));
+  value->SetString("last_timestamp",
+                   std::to_string(last_timestamp.ToInternalValue()));
+  value->SetString("difference", std::to_string(difference.ToInternalValue()));
+  value->SetString("max_difference",
+                   std::to_string(max_difference.ToInternalValue()));
+  value->SetString("newest_args.interval",
+                   std::to_string(newest_args.interval.ToInternalValue()));
+  value->EndDictionary();
   value->SetInteger("count", count);
   value->SetInteger("total_frames_", total_frames_);
   value->SetInteger("total_dropped_", total_dropped_);
   value->SetInteger("total_frames_in_window_", total_frames_in_window_);
 
+  // uint32_t dropped = dropped_frame_count_in_window_backup
+  //                        [SmoothnessStrategy::kDefaultStrategy] -
+  //                    invalidated_frames;
   uint32_t dropped =
       dropped_frame_count_in_window_[SmoothnessStrategy::kDefaultStrategy] -
       invalidated_frames;
@@ -655,6 +720,13 @@ void DroppedFrameCounter::PopSlidingWindow() {
       std::min((dropped * 100.0) / total_frames_in_window_, 100.0);
   sliding_window_histogram_[SmoothnessStrategy::kDefaultStrategy]
       .AddPercentDroppedFrame(percent_dropped_frame, count);
+  // sliding_window_histogram_[SmoothnessStrategy::kDefaultStrategy]
+  //     .AddPercentDroppedFrame(percent_dropped_frame, count2);
+  // if (idle_count > 0) {
+  //   sliding_window_histogram_[SmoothnessStrategy::kDefaultStrategy]
+  //       .AddPercentDroppedFrame(0, idle_count);
+  // }
+
   std::stringstream default_strategy_ss;
   default_strategy_ss
       << sliding_window_histogram_[SmoothnessStrategy::kDefaultStrategy];
