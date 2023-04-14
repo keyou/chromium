@@ -285,6 +285,7 @@ TaskGraphWorkQueue::PrioritizedTask TaskGraphWorkQueue::GetNextTaskToRun(
 }
 
 void TaskGraphWorkQueue::CompleteTask(PrioritizedTask completed_task) {
+  TRACE_EVENT0("cc", "TaskGraphWorkQueue::CompleteTaskKY");
   TaskNamespace* task_namespace = completed_task.task_namespace;
   scoped_refptr<Task> task(std::move(completed_task.task));
 
@@ -350,6 +351,7 @@ void TaskGraphWorkQueue::CompleteTask(PrioritizedTask completed_task) {
 
 void TaskGraphWorkQueue::CollectCompletedTasks(NamespaceToken token,
                                                Task::Vector* completed_tasks) {
+  TRACE_EVENT0("cc", "TaskGraphWorkQueue::CollectCompletedTasksKY");
   auto it = namespaces_.find(token);
   if (it == namespaces_.end())
     return;

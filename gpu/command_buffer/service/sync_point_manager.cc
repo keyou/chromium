@@ -7,12 +7,19 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <cmath>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/single_thread_task_runner.h"
+
+#include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
+#include "base/trace_event/traced_value.h"
+#include "base/values.h"
 
 namespace gpu {
 
@@ -48,6 +55,8 @@ SyncPointOrderData::SyncPointOrderData(SyncPointManager* sync_point_manager,
     : sync_point_manager_(sync_point_manager), sequence_id_(sequence_id) {
   // Creation could happen outside of GPU thread.
   DETACH_FROM_THREAD(processing_thread_checker_);
+  TRACE_EVENT2("viz", "ctor:SyncPointOrderDataKY", "sequence_id", sequence_id_,
+               "&unprocessed_order_nums_", (void*)&unprocessed_order_nums_);
 }
 
 SyncPointOrderData::~SyncPointOrderData() {
@@ -63,6 +72,8 @@ void SyncPointOrderData::Destroy() {
   {
     base::AutoLock auto_lock(lock_);
     DCHECK(!destroyed_);
+    TRACE_EVENT1("viz", "SyncPointOrderData::DestroyKY", "sequence_id",
+                 this->sequence_id().value());
     destroyed_ = true;
     while (!order_fence_queue_.empty())
       order_fence_queue_.pop();
@@ -76,6 +87,18 @@ uint32_t SyncPointOrderData::GenerateUnprocessedOrderNumber() {
   DCHECK(!destroyed_);
   last_unprocessed_order_num_ = sync_point_manager_->GenerateOrderNumber();
   unprocessed_order_nums_.push(last_unprocessed_order_num_);
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("last_unprocessed_order_num_", last_unprocessed_order_num_);
+  value->SetInteger("unprocessed_order_nums_.size()",
+                    unprocessed_order_nums_.size());
+  value->SetInteger("unprocessed_order_nums_.size()",
+                    unprocessed_order_nums_.size());
+  value->SetPointer("&unprocessed_order_nums_",
+                    (void*)&unprocessed_order_nums_);
+  value->SetPointer("this", (void*)this);
+  value->SetInteger("sequence_id", sequence_id().value());
+  TRACE_EVENT1("viz", "unprocessed_order_nums_.push()KY", "value",
+               std::move(value));
   return last_unprocessed_order_num_;
 }
 
@@ -86,6 +109,18 @@ void SyncPointOrderData::BeginProcessingOrderNumber(uint32_t order_num) {
   // |unprocessed_order_num_| are protected by a lock.
   DCHECK_GT(order_num, processed_order_num());
   DCHECK_LE(order_num, unprocessed_order_num());
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("order_num", order_num);
+  value->SetInteger("old_order_num", current_order_num_);
+  value->SetPointer("&unprocessed_order_nums_",
+                    (void*)&unprocessed_order_nums_);
+  value->SetPointer("this", (void*)this);
+  value->SetInteger("sequence_id", sequence_id().value());
+  value->SetInteger("unprocessed_order_nums_.size()",
+                    unprocessed_order_nums_.size());
+  value->SetInteger("last_unprocessed_order_num_", last_unprocessed_order_num_);
+  TRACE_EVENT1("viz", "SyncPointOrderData::BeginProcessingOrderNumberKY",
+               "value", std::move(value));
   current_order_num_ = order_num;
   paused_ = false;
 }
@@ -95,13 +130,14 @@ void SyncPointOrderData::PauseProcessingOrderNumber(uint32_t order_num) {
   DCHECK_EQ(current_order_num_, order_num);
   DCHECK(!paused_);
   paused_ = true;
+  TRACE_EVENT2("viz", "SyncPointOrderData::PauseProcessingOrderNumberKY",
+               "order_num", order_num, "old_order_num", current_order_num_);
 }
 
 void SyncPointOrderData::FinishProcessingOrderNumber(uint32_t order_num) {
   DCHECK(processing_thread_checker_.CalledOnValidThread());
   DCHECK_EQ(current_order_num_, order_num);
   DCHECK(!paused_);
-
   // Catch invalid waits which were waiting on fence syncs that do not exist.
   // When we end processing an order number, we should release any fence syncs
   // which were suppose to be released during this order number.
@@ -112,13 +148,37 @@ void SyncPointOrderData::FinishProcessingOrderNumber(uint32_t order_num) {
     DCHECK_GT(order_num, processed_order_num_);
     processed_order_num_ = order_num;
 
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetInteger("order_num", order_num);
+    value->SetInteger("current_order_num", current_order_num_);
+    value->SetPointer("&unprocessed_order_nums_",
+                      (void*)&unprocessed_order_nums_);
+    value->SetPointer("this", (void*)this);
+    value->SetInteger("sequence_id", sequence_id().value());
+    value->SetInteger("last_unprocessed_order_num_",
+                      last_unprocessed_order_num_);
+    TRACE_EVENT_BEGIN1("viz",
+                       "SyncPointOrderData::FinishProcessingOrderNumberKY",
+                       "value", std::move(value));
+
     DCHECK(!unprocessed_order_nums_.empty());
     DCHECK_EQ(order_num, unprocessed_order_nums_.front());
+    TRACE_EVENT_BEGIN2(
+        "viz", "unprocessed_order_nums_.pop()KY",
+        "unprocessed_order_nums_front()", unprocessed_order_nums_.front(),
+        "unprocessed_order_nums_size()", unprocessed_order_nums_.size());
     unprocessed_order_nums_.pop();
 
     uint32_t next_order_num = 0;
     if (!unprocessed_order_nums_.empty())
       next_order_num = unprocessed_order_nums_.front();
+    TRACE_EVENT_END2("viz", "unprocessed_order_nums_.pop()KY",
+                     "unprocessed_order_nums_front2()", next_order_num,
+                     "unprocessed_order_nums_size2()",
+                     unprocessed_order_nums_.size());
+
+    TRACE_EVENT_END1("viz", "SyncPointOrderData::FinishProcessingOrderNumberKY",
+                     "unprocessed_order_num", next_order_num);
 
     while (!order_fence_queue_.empty()) {
       const OrderFence& order_fence = order_fence_queue_.top();
@@ -145,25 +205,48 @@ uint64_t SyncPointOrderData::ValidateReleaseOrderNumber(
     uint32_t wait_order_num,
     uint64_t fence_release) {
   base::AutoLock auto_lock(lock_);
-  if (destroyed_)
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("wait_order_num", wait_order_num);
+  value->SetInteger("current_order_num", current_order_num_);
+  value->SetInteger("sequence_id", sequence_id_.value());
+  value->SetPointer("&unprocessed_order_nums_",
+                    (void*)&unprocessed_order_nums_);
+  value->SetPointer("this", (void*)this);
+  value->SetInteger("size", unprocessed_order_nums_.size());
+  TRACE_EVENT2(
+      "viz", "SyncPointOrderData::ValidateReleaseOrderNumberKY",
+      "unprocessed_order_nums_.front()",
+      unprocessed_order_nums_.empty() ? 0 : unprocessed_order_nums_.front(),
+      "value", std::move(value));
+  if (destroyed_) {
+    TRACE_EVENT0("viz", "destroyed_KY");
     return 0;
+  }
 
   // We should have unprocessed order numbers which could potentially release
   // this fence.
-  if (unprocessed_order_nums_.empty())
+  if (unprocessed_order_nums_.empty()) {
+    TRACE_EVENT0("viz", "unprocessed_order_nums_.empty()KY");
     return 0;
+  }
 
   // We should have an unprocessed order number lower than the wait order
   // number for the wait to be valid. It's not possible for wait order number to
   // equal next unprocessed order number, but we handle that defensively.
-  if (wait_order_num <= unprocessed_order_nums_.front())
+  if (wait_order_num <= unprocessed_order_nums_.front()) {
+    TRACE_EVENT2("viz", "wait_order_num <= unprocessed_order_nums_.front()KY",
+                 "wait_order_num", wait_order_num,
+                 "unprocessed_order_nums_.front()",
+                 unprocessed_order_nums_.front());
     return 0;
+  }
 
   // So far it could be valid, but add an order fence guard to be sure it
   // gets released eventually.
   uint32_t expected_order_num =
       std::min(unprocessed_order_nums_.back(), wait_order_num);
   uint64_t callback_id = ++current_callback_id_;
+  TRACE_EVENT1("viz", "return-callback_idKY", "callback_id", callback_id);
   order_fence_queue_.push(OrderFence(expected_order_num, fence_release,
                                      std::move(client_state), callback_id));
   return callback_id;
@@ -236,6 +319,24 @@ bool SyncPointClientState::WaitForRelease(uint64_t release,
   // released while we are checking.
   base::AutoLock auto_lock(fence_sync_lock_);
 
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("release", release);
+  value->SetInteger("fence_sync_release_", fence_sync_release_);
+  value->SetInteger("wait_order_num", wait_order_num);
+  value->SetInteger("sequence_id", sequence_id().value());
+  value->SetInteger("command_buffer_id", command_buffer_id().value());
+  value->SetInteger("order_data_->sequence_id",
+                    order_data_->sequence_id().value());
+  value->SetInteger("order_data_->processed_order_num",
+                    order_data_->processed_order_num());
+  value->SetInteger("order_data_->unprocessed_order_num",
+                    order_data_->unprocessed_order_num());
+  value->SetInteger("order_data_->current_order_num",
+                    order_data_->current_order_num());
+  value->SetPointer("order_data_", (void*)order_data_.get());
+  TRACE_EVENT1("viz", "SyncPointClientState::WaitForReleaseKY", "value",
+               std::move(value));
+
   // Already released, do not run the callback.
   if (release <= fence_sync_release_)
     return false;
@@ -243,6 +344,8 @@ bool SyncPointClientState::WaitForRelease(uint64_t release,
   uint64_t callback_id =
       order_data_->ValidateReleaseOrderNumber(this, wait_order_num, release);
   if (callback_id) {
+    TRACE_EVENT2("viz", "release_callback_queue_.push_back()KY",
+                 "release_count", release, "callback_id", callback_id);
     // Add the callback which will be called upon release.
     release_callback_queue_.emplace(release, std::move(callback), callback_id);
     return true;
@@ -260,12 +363,32 @@ void SyncPointClientState::ReleaseFenceSync(uint64_t release) {
 }
 
 void SyncPointClientState::ReleaseFenceSyncHelper(uint64_t release) {
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("release", release);
+  value->SetInteger("fence_sync_release_", fence_sync_release_);
+  value->SetInteger("comand_buffer_id", command_buffer_id().value());
+  value->SetInteger("sequence_id", sequence_id().value());
+  value->SetPointer("this", (void*)this);
+  value->SetInteger("order_data_->sequence_id",
+                    order_data_->sequence_id().value());
+  value->SetInteger("order_data_->processed_order_num",
+                    order_data_->processed_order_num());
+  value->SetInteger("order_data_->unprocessed_order_num",
+                    order_data_->unprocessed_order_num());
+  value->SetInteger("order_data_->current_order_num",
+                    order_data_->current_order_num());
+  value->SetPointer("order_data_", (void*)order_data_.get());
+  TRACE_EVENT1("viz", "SyncPointClientState::ReleaseFenceSyncHelperKY", "value",
+               std::move(value));
+
   // Call callbacks without the lock to avoid possible deadlocks.
   std::vector<base::OnceClosure> callback_list;
   {
     base::AutoLock auto_lock(fence_sync_lock_);
 
     if (release <= fence_sync_release_) {
+      TRACE_EVENT2("viz", "release<=fence_sync_release_KY", "release", release,
+                   "fence_sync_release_", fence_sync_release_);
       DLOG(ERROR) << "Client submitted fence releases out of order.";
       DCHECK(release_callback_queue_.empty() ||
              release_callback_queue_.top().release_count > release);
@@ -277,13 +400,18 @@ void SyncPointClientState::ReleaseFenceSyncHelper(uint64_t release) {
            release_callback_queue_.top().release_count <= release) {
       ReleaseCallback& release_callback =
           const_cast<ReleaseCallback&>(release_callback_queue_.top());
+      TRACE_EVENT2("viz", "add-callbackKY", "release_count",
+                   release_callback.release_count, "callback_id",
+                   release_callback.callback_id);
       callback_list.emplace_back(std::move(release_callback.callback_closure));
       release_callback_queue_.pop();
     }
   }
 
-  for (base::OnceClosure& closure : callback_list)
+  for (base::OnceClosure& closure : callback_list) {
+    TRACE_EVENT0("viz", "Run-ReleaseCallbackKY");
     std::move(closure).Run();
+  }
 }
 
 void SyncPointClientState::EnsureWaitReleased(uint64_t release,
@@ -429,18 +557,40 @@ bool SyncPointManager::Wait(const SyncToken& sync_token,
                             SequenceId sequence_id,
                             uint32_t wait_order_num,
                             base::OnceClosure callback) {
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("sequence_id", sequence_id.value());
+  value->SetInteger("wait_order_num", wait_order_num);
+  value->SetString("sync_token", sync_token.ToDebugString());
+  value->SetInteger("sync_token.command_buffer_id",
+                    sync_token.command_buffer_id().value());
+  value->SetInteger("sync_token.namespace_id", sync_token.namespace_id());
+  value->SetInteger("sync_token.release_count", sync_token.release_count());
+  TRACE_EVENT1("viz", "SyncPointManager::WaitKY", "value", std::move(value));
   // Waits on the same sequence can cause deadlocks.
-  if (sequence_id == GetSyncTokenReleaseSequenceId(sync_token))
+  if (sequence_id == GetSyncTokenReleaseSequenceId(sync_token)) {
+    TRACE_EVENT1("viz", "sequence_id==GetSyncTokenReleaseSequenceId()",
+                 "sequence_id", sequence_id.value());
     return false;
+  }
 
   scoped_refptr<SyncPointClientState> release_state = GetSyncPointClientState(
       sync_token.namespace_id(), sync_token.command_buffer_id());
+  if (release_state) {
+    auto value2 = std::make_unique<base::trace_event::TracedValue>();
+    value2->SetPointer("release_state", (void*)release_state.get());
+    value2->SetInteger("release_state->sequence_id",
+                       release_state->sequence_id().value());
+    TRACE_EVENT1("viz", "GetSyncPointClientStateKY", "release_state",
+                 std::move(value2));
+  }
   if (release_state &&
       release_state->WaitForRelease(sync_token.release_count(), wait_order_num,
                                     std::move(callback))) {
+    TRACE_EVENT0("viz", "WaitingKY");
     return true;
   }
 
+  TRACE_EVENT0("viz", "Wait-falseKY");
   // Do not run callback if wait is invalid.
   return false;
 }

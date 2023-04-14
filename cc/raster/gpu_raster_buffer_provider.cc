@@ -210,8 +210,11 @@ bool GpuRasterBufferProvider::IsResourceReadyToDraw(
   DCHECK(sync_token.HasData());
 
   // IsSyncTokenSignaled is thread-safe, no need for worker context lock.
-  return worker_context_provider_->ContextSupport()->IsSyncTokenSignaled(
+  auto result = worker_context_provider_->ContextSupport()->IsSyncTokenSignaled(
       sync_token);
+  TRACE_EVENT2("viz", "GpuRasterBufferProvider::IsResourceReadyToDrawKY",
+               "sync_token", sync_token.ToDebugString(), "result", result);
+  return result;
 }
 
 bool GpuRasterBufferProvider::CanPartialRasterIntoProvidedResource() const {
@@ -232,10 +235,15 @@ uint64_t GpuRasterBufferProvider::SetReadyToDrawCallback(
   uint64_t callback_id = latest_sync_token.release_count();
   DCHECK_NE(callback_id, 0u);
 
+  TRACE_EVENT2("viz", "GpuRasterBufferProvider::SetReadyToDrawCallbackKY",
+               "pending_callback_id", pending_callback_id, "latest_sync_token",
+               latest_sync_token.ToDebugString());
+
   // If the callback is different from the one the caller is already waiting on,
   // pass the callback through to SignalSyncToken. Otherwise the request is
   // redundant.
   if (callback_id != pending_callback_id) {
+    TRACE_EVENT0("viz", "->SignalSyncToken()KY");
     // Use the compositor context because we want this callback on the
     // compositor thread.
     compositor_context_provider_->ContextSupport()->SignalSyncToken(

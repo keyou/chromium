@@ -964,6 +964,7 @@ void SchedulerStateMachine::WillCommit(bool commit_has_no_updates) {
 }
 
 void SchedulerStateMachine::WillActivate() {
+  TRACE_EVENT0("cc", "SchedulerStateMachine::WillActivateKY");
   // We cannot activate the pending tree while paint worklets are still being
   // processed; the pending tree *must* be fully painted before it can ever be
   // activated because we cannot paint the active tree.
@@ -980,6 +981,9 @@ void SchedulerStateMachine::WillActivate() {
   has_pending_tree_ = false;
   pending_tree_is_ready_for_activation_ = false;
   active_tree_needs_first_draw_ = pending_tree_needs_first_draw_on_activation_;
+  TRACE_EVENT1("cc", "set-active_tree_needs_first_draw_KY",
+               "active_tree_needs_first_draw_", active_tree_needs_first_draw_);
+  // active_tree_needs_first_draw_ = false;
   pending_tree_needs_first_draw_on_activation_ = false;
   needs_redraw_ = true;
 
@@ -1292,6 +1296,10 @@ SchedulerStateMachine::BeginImplFrameDeadlineMode
 SchedulerStateMachine::CurrentBeginImplFrameDeadlineMode() const {
   const bool outside_begin_frame =
       begin_impl_frame_state_ != BeginImplFrameState::INSIDE_BEGIN_FRAME;
+  TRACE_EVENT2("cc",
+               "SchedulerStateMachine::CurrentBeginImplFrameDeadlineModeKY",
+               "need_redraw_", needs_redraw_, "outside_begin_frame",
+               outside_begin_frame);
   if (settings_.using_synchronous_renderer_compositor || outside_begin_frame) {
     // No deadline for synchronous compositor, or when outside the begin frame.
     return BeginImplFrameDeadlineMode::NONE;
@@ -1316,14 +1324,22 @@ SchedulerStateMachine::CurrentBeginImplFrameDeadlineMode() const {
 
 bool SchedulerStateMachine::ShouldTriggerBeginImplFrameDeadlineImmediately()
     const {
+  TRACE_EVENT0("cc",
+               "SchedulerStateMachine::"
+               "ShouldTriggerBeginImplFrameDeadlineImmediatelyKY");
   // If we aborted the current frame we should end the deadline right now.
-  if (ShouldAbortCurrentFrame() && !has_pending_tree_)
+  if (ShouldAbortCurrentFrame() && !has_pending_tree_) {
+    TRACE_EVENT0("cc",
+                 "ShouldAbortCurrentFrame() && !has_pending_tree_KY:true");
     return true;
+  }
 
   // Throttle the deadline on CompositorFrameAck since we wont draw and submit
   // anyway.
-  if (IsDrawThrottled())
+  if (IsDrawThrottled()) {
+    TRACE_EVENT0("cc", "IsDrawThrottled()KY:false");
     return false;
+  }
 
   // Delay immediate draws when we have pending animation worklet updates to
   // give them time to produce output before we draw.
@@ -1335,24 +1351,33 @@ bool SchedulerStateMachine::ShouldTriggerBeginImplFrameDeadlineImmediately()
   if (settings_.wait_for_all_pipeline_stages_before_draw)
     return true;
 
-  if (active_tree_needs_first_draw_)
+  if (active_tree_needs_first_draw_) {
+    TRACE_EVENT0("cc", "active_tree_needs_first_draw_KY");
     return true;
+  }
 
-  if (!needs_redraw_)
+  if (!needs_redraw_) {
+    TRACE_EVENT0("cc", "!needs_redraw_KY:false");
     return false;
+  }
 
   // This is used to prioritize impl-thread draws when the main thread isn't
   // producing anything, e.g., after an aborted commit. We also check that we
   // don't have a pending tree -- otherwise we should give it a chance to
   // activate.
   // TODO(skyostil): Revisit this when we have more accurate deadline estimates.
-  if (!CommitPending() && !has_pending_tree_)
+  if (!CommitPending() && !has_pending_tree_) {
+    TRACE_EVENT0("cc", "!CommitPending() && !has_pending_tree_KY");
     return true;
+  }
 
   // Prioritize impl-thread draws in ImplLatencyTakesPriority mode.
-  if (ImplLatencyTakesPriority())
+  if (ImplLatencyTakesPriority()) {
+    TRACE_EVENT0("cc", "ImplLatencyTakesPriority()KY");
     return true;
+  }
 
+  TRACE_EVENT0("cc", "returnKY:false");
   return false;
 }
 
@@ -1481,6 +1506,7 @@ void SchedulerStateMachine::SetCriticalBeginMainFrameToActivateIsFast(
 }
 
 bool SchedulerStateMachine::ImplLatencyTakesPriority() const {
+  // return false;
   // Attempt to synchronize with the main thread if it has a scroll listener
   // and is fast.
   if (ScrollHandlerState::SCROLL_AFFECTS_SCROLL_HANDLER ==

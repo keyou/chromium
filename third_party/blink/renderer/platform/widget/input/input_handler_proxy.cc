@@ -1006,7 +1006,18 @@ InputHandlerProxy::EventDisposition InputHandlerProxy::HandleGestureScrollBegin(
     hit_testing_scroll_begin_on_main_thread_ = true;
     return REQUIRES_MAIN_THREAD_HIT_TEST;
   }
-
+  {
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    value->SetInteger("main_thread_scrolling_reasons",
+                      scroll_status.main_thread_scrolling_reasons);
+    value->SetInteger("main_thread_repaint_reasons",
+                      scroll_status.main_thread_repaint_reasons);
+    value->SetBoolean("is_main_thread_hit_tested",
+                      scroll_state.is_main_thread_hit_tested());
+    value->SetInteger("thread", static_cast<int>(scroll_status.thread));
+    TRACE_EVENT1("input", "ScrollKYStatusKY", "scroll_status",
+                 std::move(value));
+  }
   RecordMainThreadScrollingReasons(gesture_event.SourceDevice(),
                                    scroll_status.main_thread_scrolling_reasons,
                                    scroll_state.is_main_thread_hit_tested(),
@@ -1087,6 +1098,9 @@ InputHandlerProxy::HandleGestureScrollUpdate(
       input_handler_->ScrollingShouldSwitchtoMainThread()) {
     TRACE_EVENT_INSTANT0("input", "Move Scroll To Main Thread",
                          TRACE_EVENT_SCOPE_THREAD);
+    TRACE_EVENT0("input",
+                 "input_handler_->ScrollingShouldSwitchtoMainThreadKY");
+    TRACE_EVENT0("input", "ScrollKYToMainThreadKY");
     handling_gesture_on_impl_thread_ = false;
     currently_active_gesture_device_ = absl::nullopt;
     client_->GenerateScrollBeginAndSendToMainThread(

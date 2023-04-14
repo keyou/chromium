@@ -196,6 +196,7 @@ void CommandBufferProxyImpl::RemoveDeletionObserver(
 void CommandBufferProxyImpl::OnSignalAck(uint32_t id,
                                          const CommandBuffer::State& state) {
   base::AutoLockMaybe lock(lock_.get());
+  TRACE_EVENT0("viz", "CommandBufferProxyImpl::OnSignalAckKY");
   {
     base::AutoLock last_state_lock(last_state_lock_);
     SetStateFromMessageReply(state);
@@ -457,8 +458,14 @@ uint64_t CommandBufferProxyImpl::GenerateFenceSyncRelease() {
 // non-error throwing variant of TryUpdateState for this.
 bool CommandBufferProxyImpl::IsFenceSyncReleased(uint64_t release) {
   base::AutoLock lock(last_state_lock_);
+  TRACE_EVENT_BEGIN1("viz", "CommandBufferProxyImpl::IsFenceSyncReleasedKY",
+                     "release", release);
   TryUpdateStateThreadSafe();
-  return release <= last_state_.release_count;
+  auto result = release <= last_state_.release_count;
+  TRACE_EVENT_END2("viz", "CommandBufferProxyImpl::IsFenceSyncReleasedKY",
+                   "last_state_.release_count", last_state_.release_count,
+                   "result", result);
+  return result;
 }
 
 void CommandBufferProxyImpl::SignalSyncToken(const gpu::SyncToken& sync_token,
@@ -638,6 +645,14 @@ CommandBufferProxyImpl::AllocateAndMapSharedMemory(
 void CommandBufferProxyImpl::SetStateFromMessageReply(
     const gpu::CommandBuffer::State& state) {
   CheckLock();
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("release_count", state.release_count);
+  value->SetInteger("token", state.token);
+  value->SetInteger("error", state.error);
+  value->SetInteger("context_lost_reason", state.context_lost_reason);
+  value->SetInteger("get_offset", state.get_offset);
+  TRACE_EVENT1("viz", "CommandBufferProxyImpl::SetStateFromMessageReplyKY",
+               "state", std::move(value));
   if (last_state_.error != gpu::error::kNoError)
     return;
   // Handle wraparound. It works as long as we don't have more than 2B state
@@ -650,16 +665,26 @@ void CommandBufferProxyImpl::SetStateFromMessageReply(
 
 void CommandBufferProxyImpl::TryUpdateState() {
   CheckLock();
+  TRACE_EVENT0("viz", "CommandBufferProxyImpl::TryUpdateStateKY");
   if (last_state_.error == gpu::error::kNoError) {
+    auto old_release_count = last_state_.release_count;
     shared_state()->Read(&last_state_);
+    TRACE_EVENT2("viz", "last_state_1KY", "release_count",
+                 last_state_.release_count, "old_release_count",
+                 old_release_count);
     if (last_state_.error != gpu::error::kNoError)
       OnGpuStateError();
   }
 }
 
 void CommandBufferProxyImpl::TryUpdateStateThreadSafe() {
+  TRACE_EVENT0("viz", "CommandBufferProxyImpl::TryUpdateStateThreadSafeKY");
   if (last_state_.error == gpu::error::kNoError) {
+    auto old_release_count = last_state_.release_count;
     shared_state()->Read(&last_state_);
+    TRACE_EVENT2("viz", "last_state_2KY", "release_count",
+                 last_state_.release_count, "old_release_count",
+                 old_release_count);
     if (last_state_.error != gpu::error::kNoError) {
       callback_thread_->PostTask(
           FROM_HERE,

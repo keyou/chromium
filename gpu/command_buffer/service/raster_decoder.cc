@@ -3415,6 +3415,13 @@ void RasterDecoderImpl::DoEndRasterCHROMIUM() {
     } else {
       DCHECK(end_semaphores_.empty());
     }
+
+    // TRACE_EVENT0("viz", "pressureKY");
+    // auto now = base::TimeTicks::Now();
+    // while (true) {
+    //   if (base::TimeTicks::Now() - now > base::Microseconds(2000))
+    //     break;
+    // }
   }
 
   shared_context_state_->UpdateSkiaOwnedMemorySize();

@@ -744,9 +744,7 @@ void CategorizedWorkerPool::WaitForTasksToFinishRunning(
 void CategorizedWorkerPool::CollectCompletedTasks(
     cc::NamespaceToken token,
     cc::Task::Vector* completed_tasks) {
-  TRACE_EVENT0("disabled-by-default-cc.debug",
-               "CategorizedWorkerPool::CollectCompletedTasks");
-
+  TRACE_EVENT0("cc,cc.debug", "CategorizedWorkerPool::CollectCompletedTasks");
   {
     base::AutoLock lock(lock_);
     CollectCompletedTasksWithLockAcquired(token, completed_tasks);

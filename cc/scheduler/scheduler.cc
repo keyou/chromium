@@ -15,6 +15,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/task/delay_policy.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "cc/base/devtools_instrumentation.h"
@@ -32,6 +33,7 @@ namespace {
 // This is a fudge factor we subtract from the deadline to account
 // for message latency and kernel scheduling variability.
 const base::TimeDelta kDeadlineFudgeFactor = base::Microseconds(1000);
+// const base::TimeDelta kDeadlineFudgeFactor = base::Microseconds(3000);
 }  // namespace
 
 Scheduler::Scheduler(
@@ -492,6 +494,7 @@ void Scheduler::HandlePendingBeginFrame() {
 }
 
 void Scheduler::BeginImplFrameWithDeadline(const viz::BeginFrameArgs& args) {
+  TRACE_EVENT0("cc", "Scheduler::BeginImplFrameWithDeadlineKY");
   DCHECK(pending_begin_frame_task_.IsCancelled());
   DCHECK(!pending_begin_frame_args_.IsValid());
 
@@ -522,6 +525,14 @@ void Scheduler::BeginImplFrameWithDeadline(const viz::BeginFrameArgs& args) {
   viz::BeginFrameArgs adjusted_args = args;
   adjusted_args.deadline -= compositor_timing_history_->DrawDurationEstimate();
   adjusted_args.deadline -= kDeadlineFudgeFactor;
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger(
+      "DrawDurationEstimateKY",
+      compositor_timing_history_->DrawDurationEstimate().InMicroseconds());
+  value->SetInteger("adjusted_args.deadline_delta",
+                    (adjusted_args.deadline - Now()).InMicroseconds());
+  value->SetInteger("adjusted_args.interval",
+                    adjusted_args.interval.InMicroseconds());
 
   // TODO(khushalsagar): We need to consider the deadline fudge factor here to
   // match the deadline used in BeginImplFrameDeadlineMode::REGULAR mode
@@ -532,10 +543,17 @@ void Scheduler::BeginImplFrameWithDeadline(const viz::BeginFrameArgs& args) {
   base::TimeDelta bmf_to_activate_threshold =
       adjusted_args.interval -
       compositor_timing_history_->DrawDurationEstimate() - kDeadlineFudgeFactor;
+  value->SetInteger("bmf_to_activate_threshold",
+                    bmf_to_activate_threshold.InMicroseconds());
 
   base::TimeDelta bmf_to_activate_estimate_critical =
       compositor_timing_history_
           ->BeginMainFrameQueueToActivateCriticalEstimate();
+  value->SetInteger("bmf_to_activate_estimate_critical",
+                    bmf_to_activate_estimate_critical.InMicroseconds());
+  value->SetBoolean(
+      "CriticalBeginMainFrameToActivateIsFast",
+      bmf_to_activate_estimate_critical < bmf_to_activate_threshold);
   state_machine_.SetCriticalBeginMainFrameToActivateIsFast(
       bmf_to_activate_estimate_critical < bmf_to_activate_threshold);
 
@@ -543,6 +561,8 @@ void Scheduler::BeginImplFrameWithDeadline(const viz::BeginFrameArgs& args) {
   // thread will be on the critical path or not.
   begin_main_frame_args_ = adjusted_args;
   begin_main_frame_args_.on_critical_path = !ImplLatencyTakesPriority();
+  value->SetBoolean("begin_main_frame_args.on_critical_path",
+                    begin_main_frame_args_.on_critical_path);
 
   // If we expect the main thread to respond within this frame, defer the
   // invalidation to merge it with the incoming main frame. Even if the response
@@ -555,6 +575,8 @@ void Scheduler::BeginImplFrameWithDeadline(const viz::BeginFrameArgs& args) {
     time_since_main_frame_sent =
         now - compositor_timing_history_->begin_main_frame_sent_time();
   }
+  value->SetInteger("time_since_main_frame_sent",
+                    time_since_main_frame_sent.InMicroseconds());
   base::TimeDelta bmf_sent_to_ready_to_commit_estimate;
   if (begin_main_frame_args_.on_critical_path) {
     bmf_sent_to_ready_to_commit_estimate =
@@ -565,7 +587,8 @@ void Scheduler::BeginImplFrameWithDeadline(const viz::BeginFrameArgs& args) {
         compositor_timing_history_
             ->BeginMainFrameStartToReadyToCommitNotCriticalEstimate();
   }
-
+  value->SetInteger("bmf_sent_to_ready_to_commit_estimate",
+                    bmf_sent_to_ready_to_commit_estimate.InMicroseconds());
   bool main_thread_response_expected_before_deadline;
   if (time_since_main_frame_sent > bmf_to_activate_threshold) {
     // If the response to a main frame is pending past the desired duration
@@ -577,9 +600,11 @@ void Scheduler::BeginImplFrameWithDeadline(const viz::BeginFrameArgs& args) {
         bmf_sent_to_ready_to_commit_estimate - time_since_main_frame_sent <
         bmf_to_activate_threshold;
   }
+  value->SetBoolean("main_thread_response_expected_before_deadline",
+                    main_thread_response_expected_before_deadline);
   state_machine_.set_should_defer_invalidation_for_fast_main_frame(
       main_thread_response_expected_before_deadline);
-
+  TRACE_EVENT1("cc", "BeginImplFrame1KY", "value", std::move(value));
   BeginImplFrame(adjusted_args, now);
 }
 
@@ -705,15 +730,23 @@ void Scheduler::BeginImplFrame(const viz::BeginFrameArgs& args,
 void Scheduler::ScheduleBeginImplFrameDeadline() {
   using DeadlineMode = SchedulerStateMachine::BeginImplFrameDeadlineMode;
   deadline_mode_ = state_machine_.CurrentBeginImplFrameDeadlineMode();
+  // if (deadline_mode_ == DeadlineMode::IMMEDIATE)
+  //   deadline_mode_ = DeadlineMode::REGULAR;
+  TRACE_EVENT1("cc", "Scheduler::ScheduleBeginImplFrameDeadlineKY",
+               "deadline_mode",
+               SchedulerStateMachine::BeginImplFrameDeadlineModeToString(
+                   deadline_mode_));
 
   base::TimeTicks new_deadline;
   switch (deadline_mode_) {
-    case DeadlineMode::NONE:
+    case DeadlineMode::NONE: {
       // NONE is returned when deadlines aren't used (synchronous compositor),
       // or when outside a begin frame. In either case deadline task shouldn't
       // be posted or should be cancelled already.
       DCHECK(!begin_impl_frame_deadline_timer_.IsRunning());
+      TRACE_EVENT0("cc", "return:NONEKY");
       return;
+    }
     case DeadlineMode::BLOCKED: {
       // TODO(sunnyps): Posting the deadline for pending begin frame is required
       // for browser compositor (commit_to_active_tree) to make progress in some
@@ -729,6 +762,7 @@ void Scheduler::ScheduleBeginImplFrameDeadline() {
         break;
       } else {
         begin_impl_frame_deadline_timer_.Stop();
+        TRACE_EVENT0("cc", "return:begin_impl_frame_deadline_timer_.Stop()");
         return;
       }
     }
@@ -755,8 +789,15 @@ void Scheduler::ScheduleBeginImplFrameDeadline() {
       // this method is called in every ProcessScheduledActions() call. Using
       // base::TimeTicks() achieves the same result.
       new_deadline = base::TimeTicks();
+      // new_deadline = base::TimeTicks::Now() + base::Milliseconds(4);
       break;
   }
+  auto now = base::TimeTicks::Now();
+  TRACE_EVENT2(
+      "cc", "new_deadlineKY", "new_deadline_delta",
+      new_deadline.is_null() ? 0 : (new_deadline - now).InMicroseconds(),
+      "old_deadline_delta",
+      deadline_.is_null() ? 0 : (deadline_ - now).InMicroseconds());
 
   // Post deadline task only if we didn't have one already or something caused
   // us to change the deadline.

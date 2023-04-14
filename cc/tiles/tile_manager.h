@@ -37,6 +37,8 @@
 #include "ui/gfx/display_color_spaces.h"
 #include "url/gurl.h"
 
+#include "base/timer/timer.h"
+
 namespace base {
 namespace trace_event {
 class ConvertableToTraceFormat;
@@ -433,6 +435,7 @@ class CC_EXPORT TileManager : CheckerImageTrackerClient {
 
   bool UsePartialRaster(int msaa_sample_count) const;
 
+  void DelayFlushAndIssueSignals();
   void FlushAndIssueSignals();
   void CheckPendingGpuWorkAndIssueSignals();
   void IssueSignals();
@@ -474,6 +477,7 @@ class CC_EXPORT TileManager : CheckerImageTrackerClient {
   Signals signals_;
 
   UniqueNotifier signals_check_notifier_;
+  base::DeadlineTimer deadline_timer_;
 
   bool has_scheduled_tile_tasks_;
 

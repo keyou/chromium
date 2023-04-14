@@ -574,22 +574,29 @@ void CommandBufferStub::ReportState() {
 
 void CommandBufferStub::SignalSyncToken(const SyncToken& sync_token,
                                         uint32_t id) {
+  TRACE_EVENT2("viz", "CommandBufferStub::SignalSyncTokenKY", "sync_token",
+               sync_token.ToDebugString(), "id", id);
   UpdateActiveUrl();
   auto callback =
       base::BindOnce(&CommandBufferStub::OnSignalAck, this->AsWeakPtr(), id);
   if (!sync_point_client_state_->WaitNonThreadSafe(
           sync_token, channel_->task_runner(), std::move(callback))) {
+    TRACE_EVENT1("viz", "OnSignalAck1KY", "id", id);
     OnSignalAck(id);
   }
 }
 
 void CommandBufferStub::OnSignalAck(uint32_t id) {
   gpu::CommandBuffer::State state = command_buffer_->GetState();
+  TRACE_EVENT2("viz", "CommandBufferStub::OnSignalAckKY", "release_count",
+               state.release_count, "error", state.error);
   ReportState();
   client_->OnSignalAck(id, state);
 }
 
 void CommandBufferStub::SignalQuery(uint32_t query_id, uint32_t id) {
+  TRACE_EVENT2("viz", "CommandBufferStub::SignalQueryKY", "query_id", query_id,
+               "id", id);
   UpdateActiveUrl();
   if (decoder_context_) {
     decoder_context_->SetQueryCallback(

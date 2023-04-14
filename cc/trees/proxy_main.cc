@@ -431,7 +431,12 @@ void ProxyMain::BeginMainFrame(
     absl::optional<DebugScopedSetMainThreadBlocked> main_thread_blocked;
     if (blocking)
       main_thread_blocked.emplace(task_runner_provider_);
-
+    // auto start = base::TimeTicks::Now();
+    // while (true) {
+    //   auto result = base::TimeTicks::Now() - start;
+    //   if (result.InMicroseconds() > 2000)
+    //     break;
+    // }
     ImplThreadTaskRunner()->PostTask(
         FROM_HERE,
         base::BindOnce(

@@ -234,9 +234,23 @@ void LayerTreeImpl::DidUpdateScrollOffset(ElementId id) {
   // immediate changes in the compositor, we want the scroll to propagate
   // through Blink in a commit and have Blink update properties, paint,
   // compositing, etc. Thus, we avoid mutating the transform tree in this case.
+  auto can_realize_scrolls_on_compositor =
+      scroll_tree.CanRealizeScrollsOnCompositor(*scroll_node);
   bool should_realize_scroll_on_compositor =
       !base::FeatureList::IsEnabled(features::kScrollUnification) ||
-      scroll_tree.CanRealizeScrollsOnCompositor(*scroll_node);
+      can_realize_scrolls_on_compositor;
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetBoolean("can_realize_scrolls_on_compositor",
+                    can_realize_scrolls_on_compositor);
+  value->SetBoolean("should_realize_scroll_on_compositor",
+                    should_realize_scroll_on_compositor);
+  value->SetInteger("main_thread_scrolling_reasons",
+                    scroll_node->main_thread_scrolling_reasons);
+  value->BeginDictionary("scroll_node");
+  scroll_node->AsValueInto(value.get());
+  value->EndDictionary();
+  TRACE_EVENT1("cc", "LayerTreeImpl::DidUpdateScrollOffsetKY", "value",
+               std::move(value));
 
   DCHECK(scroll_node->transform_id != kInvalidPropertyNodeId);
   TransformTree& transform_tree = property_trees()->transform_tree_mutable();

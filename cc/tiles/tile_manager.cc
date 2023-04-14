@@ -8,11 +8,14 @@
 #include <stdint.h>
 
 #include <limits>
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
 #include "base/json/json_writer.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram.h"
@@ -20,7 +23,9 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/ranges/algorithm.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/delay_policy.h"
 #include "base/threading/thread_checker.h"
+#include "base/time/time.h"
 #include "base/trace_event/traced_value.h"
 #include "cc/base/devtools_instrumentation.h"
 #include "cc/base/histograms.h"
@@ -349,7 +354,7 @@ class DidFinishRunningAllTilesTask : public TileTask {
         completion_cb_(std::move(completion_cb)) {}
 
   void RunOnWorkerThread() override {
-    TRACE_EVENT0("cc", "TaskSetFinishedTaskImpl::RunOnWorkerThread");
+    TRACE_EVENT0("cc", "DidFinishRunningAllTilesTask::RunOnWorkerThreadKY");
     bool has_pending_queries = false;
     if (pending_raster_queries_) {
       has_pending_queries =
@@ -423,11 +428,13 @@ TileManager::TileManager(
                               base::Unretained(this))),
       signals_check_notifier_(
           task_runner_,
-          base::BindRepeating(&TileManager::FlushAndIssueSignals,
+          base::BindRepeating(&TileManager::DelayFlushAndIssueSignals,
                               base::Unretained(this))),
       has_scheduled_tile_tasks_(false),
       prepare_tiles_count_(0u),
-      next_tile_id_(0u) {}
+      next_tile_id_(0u) {
+  deadline_timer_.SetTaskRunner(task_runner_.get());
+}
 
 TileManager::~TileManager() {
   FinishTasksAndCleanUp();
@@ -526,7 +533,8 @@ void TileManager::DidFinishRunningTileTasksRequiredForDraw() {
 
 void TileManager::DidFinishRunningAllTileTasks(bool has_pending_queries) {
   TRACE_EVENT0("cc", "TileManager::DidFinishRunningAllTileTasks");
-  TRACE_EVENT_NESTABLE_ASYNC_END0("cc", "ScheduledTasks", TRACE_ID_LOCAL(this));
+  TRACE_EVENT_NESTABLE_ASYNC_END1("cc", "ScheduledTasks", TRACE_ID_LOCAL(this),
+                                  "stateZK", ScheduledTasksStateAsValue());
   DCHECK(resource_pool_);
   DCHECK(tile_task_manager_);
 
@@ -608,6 +616,7 @@ void TileManager::CheckForCompletedTasks() {
   tile_task_manager_->CheckForCompletedTasks();
   did_check_for_completed_tasks_since_last_schedule_tasks_ = true;
 
+  // raster_buffer_provider_->Flush();  // keyou
   CheckPendingGpuWorkAndIssueSignals();
 
   TRACE_EVENT_INSTANT1(
@@ -1510,6 +1519,17 @@ void TileManager::CheckRasterFinishedQueries() {
     ScheduleCheckRasterFinishedQueries();
 }
 
+void TileManager::DelayFlushAndIssueSignals() {
+  TRACE_EVENT0("cc", "TileManager::DelayFlushAndIssueSignalsKY");
+  // deadline_timer_.Stop();
+  // deadline_timer_.Start(FROM_HERE,
+  //                       base::TimeTicks::Now() + base::Microseconds(100),
+  //                       base::BindOnce(&TileManager::FlushAndIssueSignals,
+  //                                      base::Unretained(this)),
+  //                       base::subtle::DelayPolicy::kPrecise);
+  FlushAndIssueSignals();
+}
+
 void TileManager::FlushAndIssueSignals() {
   TRACE_EVENT0("cc", "TileManager::FlushAndIssueSignals");
   tile_task_manager_->CheckForCompletedTasks();
@@ -1520,15 +1540,33 @@ void TileManager::FlushAndIssueSignals() {
 }
 
 void TileManager::IssueSignals() {
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetBoolean("draw_tile_tasks_completed",
+                    signals_.draw_tile_tasks_completed);
+  value->SetBoolean("all_tile_tasks_completed",
+                    signals_.all_tile_tasks_completed);
+  value->SetBoolean("activate_gpu_work_completed",
+                    signals_.activate_gpu_work_completed);
+  value->SetBoolean("draw_gpu_work_completed",
+                    signals_.draw_gpu_work_completed);
+  value->SetBoolean("did_notify_ready_to_activate",
+                    signals_.did_notify_ready_to_activate);
+  value->SetBoolean("did_notify_ready_to_draw",
+                    signals_.did_notify_ready_to_draw);
+  value->SetBoolean("did_notify_all_tile_tasks_completed",
+                    signals_.did_notify_all_tile_tasks_completed);
+
+  TRACE_EVENT1("cc", "TileManager::IssueSignalsKY", "signals_",
+               std::move(value));
   // Ready to activate.
   if (signals_.activate_tile_tasks_completed &&
       signals_.activate_gpu_work_completed &&
       !signals_.did_notify_ready_to_activate) {
+    TRACE_EVENT1("cc", "IsReadyToActivate()KY", "value", IsReadyToActivate());
     // If commit_to_active_tree is true(no pending tree), NotifyReadyToActivate
     // isn't sent to client, so don't call IsReadyToActivate() to save CPU time
     if (client_->HasPendingTree() && IsReadyToActivate()) {
-      TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
-                   "TileManager::IssueSignals - ready to activate");
+      TRACE_EVENT0("cc", "ready to activate");
       signals_.did_notify_ready_to_activate = true;
       client_->NotifyReadyToActivate();
     }
@@ -1538,8 +1576,7 @@ void TileManager::IssueSignals() {
   if (signals_.draw_tile_tasks_completed && signals_.draw_gpu_work_completed &&
       !signals_.did_notify_ready_to_draw) {
     if (tile_manager_settings_.needs_notify_ready_to_draw && IsReadyToDraw()) {
-      TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
-                   "TileManager::IssueSignals - ready to draw");
+      TRACE_EVENT0("cc", "ready to draw");
       signals_.did_notify_ready_to_draw = true;
       client_->NotifyReadyToDraw();
     }
@@ -1549,8 +1586,7 @@ void TileManager::IssueSignals() {
   if (signals_.all_tile_tasks_completed &&
       !signals_.did_notify_all_tile_tasks_completed) {
     if (!has_scheduled_tile_tasks_) {
-      TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
-                   "TileManager::IssueSignals - all tile tasks completed");
+      TRACE_EVENT0("cc", "all tile tasks completed");
 
       if (has_pending_queries_)
         ScheduleCheckRasterFinishedQueries();
@@ -1704,6 +1740,10 @@ TileManager::ScheduledTasksStateAsValue() const {
                     signals_.draw_tile_tasks_completed);
   state->SetBoolean("all_tile_tasks_completed",
                     signals_.all_tile_tasks_completed);
+  state->SetBoolean("activate_gpu_work_completed",
+                    signals_.activate_gpu_work_completed);
+  state->SetBoolean("did_notify_ready_to_activate",
+                    signals_.did_notify_ready_to_activate);
   state->EndDictionary();
   return std::move(state);
 }
@@ -1726,20 +1766,35 @@ void TileManager::CheckPendingGpuWorkAndIssueSignals() {
   std::vector<const ResourcePool::InUsePoolResource*> required_for_activation;
   std::vector<const ResourcePool::InUsePoolResource*> required_for_draw;
 
+  TRACE_EVENT1("cc", "foreach:pending_gpu_work_tiles_KY", "size",
+               pending_gpu_work_tiles_.size());
   for (auto it = pending_gpu_work_tiles_.begin();
        it != pending_gpu_work_tiles_.end();) {
     Tile* tile = *it;
     DCHECK(tile->draw_info().has_resource());
     const ResourcePool::InUsePoolResource& resource =
         tile->draw_info().GetResource();
+    auto value = std::make_unique<base::trace_event::TracedValue>();
+    tile->AsValueInto(value.get());
+    value->BeginDictionary("tilingKY");
+    tile->tiling()->AsValueInto(value.get());
+    value->EndDictionary();
+    TRACE_EVENT2("cc", "iterator:tileKY", "tile", std::move(value),
+                 "pending_tile_requirements_dirty_",
+                 pending_tile_requirements_dirty_);
 
     // Update requirements first so that if the tile has become required
     // it will force a redraw.
     if (pending_tile_requirements_dirty_)
       tile->tiling()->UpdateRequiredStatesOnTile(tile);
 
+    TRACE_EVENT2("cc", "tile_stateKY", "required_for_activation",
+                 tile->required_for_activation(), "required_for_draw",
+                 tile->required_for_draw());
+
     if (global_state_.tree_priority != SMOOTHNESS_TAKES_PRIORITY ||
         raster_buffer_provider_->IsResourceReadyToDraw(resource)) {
+      TRACE_EVENT0("cc", "client_->NotifyTileStateChanged()KY");
       tile->draw_info().set_resource_ready_for_draw();
       client_->NotifyTileStateChanged(tile);
       it = pending_gpu_work_tiles_.erase(it);
@@ -1749,10 +1804,14 @@ void TileManager::CheckPendingGpuWorkAndIssueSignals() {
     // TODO(ericrk): If a tile in our list no longer has valid tile priorities,
     // it may still report that it is required, and unnecessarily delay
     // activation. crbug.com/687265
-    if (tile->required_for_activation())
+    if (tile->required_for_activation()) {
+      TRACE_EVENT0("cc", "tile->required_for_activation()KY");
       required_for_activation.push_back(&resource);
-    if (tile->required_for_draw())
+    }
+    if (tile->required_for_draw()) {
+      TRACE_EVENT0("cc", "tile->required_for_draw()KY");
       required_for_draw.push_back(&resource);
+    }
 
     ++it;
   }
@@ -1760,6 +1819,8 @@ void TileManager::CheckPendingGpuWorkAndIssueSignals() {
   if (required_for_activation.empty()) {
     pending_required_for_activation_callback_id_ = 0;
   } else {
+    TRACE_EVENT0(
+        "cc", "activation:raster_buffer_provider_->SetReadyToDrawCallbackKY");
     pending_required_for_activation_callback_id_ =
         raster_buffer_provider_->SetReadyToDrawCallback(
             required_for_activation,
@@ -1772,6 +1833,8 @@ void TileManager::CheckPendingGpuWorkAndIssueSignals() {
   if (required_for_draw.empty()) {
     pending_required_for_draw_callback_id_ = 0;
   } else {
+    TRACE_EVENT0("cc",
+                 "draw:raster_buffer_provider_->SetReadyToDrawCallbackKY");
     pending_required_for_draw_callback_id_ =
         raster_buffer_provider_->SetReadyToDrawCallback(
             required_for_draw,
@@ -1786,6 +1849,10 @@ void TileManager::CheckPendingGpuWorkAndIssueSignals() {
       (pending_required_for_activation_callback_id_ == 0);
   signals_.draw_gpu_work_completed =
       (pending_required_for_draw_callback_id_ == 0);
+  TRACE_EVENT2("cc", "signals_stateKY", "signals_.activate_gpu_work_completed",
+               signals_.activate_gpu_work_completed,
+               "signals_.draw_gpu_work_completed",
+               signals_.draw_gpu_work_completed);
 
   // We've just updated all pending tile requirements if necessary.
   pending_tile_requirements_dirty_ = false;
