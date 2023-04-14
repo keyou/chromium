@@ -2733,6 +2733,7 @@ void LocalFrame::CountUseIfFeatureWouldBeBlockedByPermissionsPolicy(
 }
 
 void LocalFrame::FinishedLoading(FrameLoader::NavigationFinishState state) {
+  TRACE_EVENT1("blink", "LocalFrame::FinishedLoadingKY", "state", state);
   DomWindow()->FinishedLoading(state);
 }
 

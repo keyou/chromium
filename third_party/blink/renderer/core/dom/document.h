@@ -1459,7 +1459,7 @@ class CORE_EXPORT Document : public ContainerNode,
 
   // Used to allow element that loads data without going through a FrameLoader
   // to delay the 'load' event.
-  void IncrementLoadEventDelayCount() { ++load_event_delay_count_; }
+  void IncrementLoadEventDelayCount();
   void DecrementLoadEventDelayCount();
   void CheckLoadEventSoon();
   bool IsDelayingLoadEvent();

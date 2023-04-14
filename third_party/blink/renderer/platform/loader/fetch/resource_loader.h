@@ -177,6 +177,7 @@ class PLATFORM_EXPORT ResourceLoader final
  private:
   friend class SubresourceIntegrityTest;
   friend class ResourceLoaderIsolatedCodeCacheTest;
+  friend class ResourceFetcher;
   class CodeCacheRequest;
 
   void DidStartLoadingResponseBodyInternal(BytesConsumer& bytes_consumer);

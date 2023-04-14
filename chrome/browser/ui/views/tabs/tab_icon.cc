@@ -361,6 +361,9 @@ void TabIcon::SetIcon(const gfx::ImageSkia& icon, bool should_themify_favicon) {
 }
 
 void TabIcon::SetNetworkState(TabNetworkState network_state) {
+  TRACE_EVENT1("views,blink", "TabIcon::SetNetworkStateKY", "network_state",
+               network_state);
+  LOG(ERROR) << "keyou: network_state: " << static_cast<int>(network_state);
   const bool was_animated = NetworkStateIsAnimated(network_state_);
   network_state_ = network_state;
   const bool is_animated = NetworkStateIsAnimated(network_state_);

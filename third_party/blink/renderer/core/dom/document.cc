@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 
 #include <memory>
+#include <sstream>
 #include <utility>
 
 #include "base/auto_reset.h"
@@ -362,6 +363,9 @@
 using WeakDocumentSet = blink::HeapHashSet<blink::WeakMember<blink::Document>>;
 static WeakDocumentSet& LiveDocumentSet();
 #endif
+
+#include "base/debug/stack_trace.h"
+#include "sstream"
 
 namespace blink {
 
@@ -3737,9 +3741,40 @@ static bool AllDescendantsAreComplete(Document* document) {
   return true;
 }
 
+void Document::IncrementLoadEventDelayCount() {
+  auto&& st = base::debug::StackTrace();
+  ++load_event_delay_count_;
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("load_event_delay_count_", load_event_delay_count_);
+  value->SetPointer("&load_event_delay_count_",
+                    (void*)&load_event_delay_count_);
+  value->SetPointer("this", (void*)this);
+  TRACE_EVENT2("blink", "Document::IncrementLoadEventDelayCountKY", "st",
+               st.ToString(), "value", std::move(value));
+}
+
 bool Document::ShouldComplete() {
+  std::stringstream ss;
+  ss << "keyou: ShouldComplete: "
+     << "1:" << (parsing_state_ == kFinishedParsing)
+     << " 2:" << !fetcher_->BlockingRequestCount()
+     << " 3:" << !IsDelayingLoadEvent()
+     << " 4:" << !javascript_url_task_handle_.IsActive()
+     << " 5:" << (load_event_progress_ != kLoadEventInProgress)
+     << " 6:" << AllDescendantsAreComplete(this)
+     << " 7:" << !Fetcher()->IsInRequestResource();
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetString("data", ss.str());
+  value->SetInteger("load_event_delay_count_", load_event_delay_count_);
+  value->SetPointer("&load_event_delay_count_",
+                    (void*)&load_event_delay_count_);
+  value->SetPointer("this", (void*)this);
+  TRACE_EVENT1("blink", "Document::ShouldCompleteKY", "value",
+               std::move(value));
+  LOG(ERROR) << ss.str();
   return parsing_state_ == kFinishedParsing &&
-         !fetcher_->BlockingRequestCount() && !IsDelayingLoadEvent() &&
+         (false || !fetcher_->BlockingRequestCount()) &&
+         (false || !IsDelayingLoadEvent()) &&
          !javascript_url_task_handle_.IsActive() &&
          load_event_progress_ != kLoadEventInProgress &&
          AllDescendantsAreComplete(this) && !Fetcher()->IsInRequestResource();
@@ -3751,16 +3786,21 @@ void Document::Abort() {
 }
 
 void Document::CheckCompleted() {
+  TRACE_EVENT0("blink", "Document::CheckCompletedKY");
   if (CheckCompletedInternal()) {
+    TRACE_EVENT0("blink", "Loader().DidFinishNavigationKY");
     GetFrame()->Loader().DidFinishNavigation(
         FrameLoader::NavigationFinishState::kSuccess);
   }
 }
 
 bool Document::CheckCompletedInternal() {
+  TRACE_EVENT0("blink", "Document::CheckCompletedInternalKY");
+  LOG(ERROR) << "keyou: Document::CheckCompletedInternal";
   if (!ShouldComplete())
     return false;
 
+  LOG(ERROR) << "keyou: ShouldComplete = true";
   if (GetFrame() && !UnloadStarted()) {
     GetFrame()->Client()->RunScriptsAtDocumentIdle();
 
@@ -3772,13 +3812,16 @@ bool Document::CheckCompletedInternal() {
     // event.
     if (!ShouldComplete())
       return false;
-  }
 
+    LOG(ERROR) << "keyou: ShouldComplete2 = true";
+  }
+  TRACE_EVENT0("blink", "SetReadyStateKY");
   // OK, completed. Fire load completion events as needed.
   SetReadyState(kComplete);
   if (LoadEventStillNeeded())
     ImplicitClose();
 
+  TRACE_EVENT0("blink", "fetcher_->ScheduleWarnUnusedPreloadsKY");
   DCHECK(fetcher_);
   fetcher_->ScheduleWarnUnusedPreloads();
 
@@ -3786,12 +3829,17 @@ bool Document::CheckCompletedInternal() {
   if (!GetFrame() || !GetFrame()->IsAttached())
     return false;
   http_refresh_scheduler_->MaybeStartTimer();
+  TRACE_EVENT0("blink", "View()->HandleLoadCompletedKY");
   View()->HandleLoadCompleted();
+  TRACE_EVENT0("blink", "AllDescendantsAreCompleteKY");
+  LOG(ERROR) << "keyou: GetFrame()->IsAttached() = true";
   // The document itself is complete, but if a child frame was restarted due to
   // an event, this document is still considered to be in progress.
   if (!AllDescendantsAreComplete(this))
     return false;
 
+  TRACE_EVENT0("blink", "SentDidFinishLoadKY");
+  LOG(ERROR) << "keyou: AllDescendantsAreComplete = true";
   // No need to repeat if we've already notified this load as finished.
   if (!Loader()->SentDidFinishLoad()) {
     if (GetFrame()->IsOutermostMainFrame()) {
@@ -7771,6 +7819,8 @@ void Document::DecrementLoadEventDelayCount() {
   DCHECK(load_event_delay_count_);
   --load_event_delay_count_;
 
+  TRACE_EVENT1("blink", "Document::DecrementLoadEventDelayCountKY",
+               "load_event_delay_count_", load_event_delay_count_);
   if (!load_event_delay_count_)
     CheckLoadEventSoon();
 }
@@ -7779,6 +7829,9 @@ void Document::DecrementLoadEventDelayCountAndCheckLoadEvent() {
   DCHECK(load_event_delay_count_);
   --load_event_delay_count_;
 
+  TRACE_EVENT1("blink",
+               "Document::DecrementLoadEventDelayCountAndCheckLoadEventKY",
+               "load_event_delay_count_", load_event_delay_count_);
   if (!load_event_delay_count_)
     CheckCompleted();
 }
