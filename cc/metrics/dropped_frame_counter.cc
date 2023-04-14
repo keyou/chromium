@@ -142,8 +142,8 @@ DroppedFrameCounter::DroppedFrameCounter()
     if (sliding_window_seconds)
       sliding_window_interval_ = base::Seconds(sliding_window_seconds);
   }
-  TRACE_EVENT1("cc", "ctor::DroppedFrameCounterKY", "sliding_window_interval_",
-               sliding_window_interval_);
+  TRACE_EVENT2("cc", "ctor::DroppedFrameCounterKY", "sliding_window_interval_",
+               sliding_window_interval_, "this", (void*)this);
 }
 DroppedFrameCounter::~DroppedFrameCounter() = default;
 
@@ -158,26 +158,41 @@ uint32_t DroppedFrameCounter::GetAverageThroughput() const {
 }
 
 void DroppedFrameCounter::AddGoodFrame() {
-  TRACE_EVENT2("cc", "DroppedFrameCounter::AddGoodFrameKY", "total_frames_",
-               total_frames_ + 1, "total_dropped_", total_dropped_);
   ring_buffer_.SaveToBuffer(kFrameStateComplete);
   ++total_frames_;
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetPointer("this", (void*)this);
+  value->SetInteger("total_frames_", total_frames_);
+  value->SetInteger("total_dropped_", total_dropped_);
+  value->SetInteger("total_partial_", total_partial_);
+  TRACE_EVENT1("cc", "DroppedFrameCounter::AddGoodFrameKY", "value",
+               std::move(value));
 }
 
 void DroppedFrameCounter::AddPartialFrame() {
-  TRACE_EVENT2("cc", "DroppedFrameCounter::AddPartialFrameKY", "total_frames_",
-               total_frames_ + 1, "total_partial_", total_partial_ + 1);
   ring_buffer_.SaveToBuffer(kFrameStatePartial);
   ++total_frames_;
   ++total_partial_;
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetPointer("this", (void*)this);
+  value->SetInteger("total_frames_", total_frames_);
+  value->SetInteger("total_dropped_", total_dropped_);
+  value->SetInteger("total_partial_", total_partial_);
+  TRACE_EVENT1("cc", "DroppedFrameCounter::AddPartialFrameKY", "value",
+               std::move(value));
 }
 
 void DroppedFrameCounter::AddDroppedFrame() {
-  TRACE_EVENT2("cc", "DroppedFrameCounter::AddDroppedFrameKY", "total_frames_",
-               total_frames_ + 1, "total_dropped_", total_dropped_ + 1);
   ring_buffer_.SaveToBuffer(kFrameStateDropped);
   ++total_frames_;
   ++total_dropped_;
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetPointer("this", (void*)this);
+  value->SetInteger("total_frames_", total_frames_);
+  value->SetInteger("total_dropped_", total_dropped_);
+  value->SetInteger("total_partial_", total_partial_);
+  TRACE_EVENT1("cc", "DroppedFrameCounter::AddDroppedFrameKY", "value",
+               std::move(value));
 }
 
 void DroppedFrameCounter::ResetPendingFrames(base::TimeTicks timestamp) {
@@ -185,7 +200,7 @@ void DroppedFrameCounter::ResetPendingFrames(base::TimeTicks timestamp) {
   // pending frames (In other words calling NotifyFrameResult and update
   // smoothness metrics tracked for all frames that have received their ack).
   frame_sorter_.Reset();
-  TRACE_EVENT0("cc", "DroppedFrameCounter::ResetPendingFramesKY");
+  TRACE_EVENT1("cc", "DroppedFrameCounter::ResetPendingFramesKY", "this", this);
 
   // Before resetting the pending frames, update the measurements for the
   // sliding windows.
@@ -251,8 +266,8 @@ void DroppedFrameCounter::OnBeginFrame(const viz::BeginFrameArgs& args,
                                        bool is_scroll_active) {
   // Remember when scrolling starts/ends. Do this even if fcp has not happened
   // yet.
-  TRACE_EVENT1("cc", "DroppedFrameCounter::OnBeginFrameKY", "is_scroll_active",
-               is_scroll_active);
+  TRACE_EVENT2("cc", "DroppedFrameCounter::OnBeginFrameKY", "is_scroll_active",
+               is_scroll_active, "this", this);
   if (!is_scroll_active) {
     scroll_start_.reset();
   } else if (!scroll_start_.has_value()) {
@@ -272,8 +287,8 @@ void DroppedFrameCounter::OnBeginFrame(const viz::BeginFrameArgs& args,
 void DroppedFrameCounter::OnEndFrame(const viz::BeginFrameArgs& args,
                                      const FrameInfo& frame_info) {
   const bool is_dropped = frame_info.IsDroppedAffectingSmoothness();
-  TRACE_EVENT1("cc", "DroppedFrameCounter::OnEndFrameKY", "is_dropped",
-               is_dropped);
+  TRACE_EVENT2("cc", "DroppedFrameCounter::OnEndFrameKY", "is_dropped",
+               is_dropped, "this", this);
   if (!args.interval.is_zero())
     total_frames_in_window_ = sliding_window_interval_ / args.interval;
 
@@ -313,8 +328,8 @@ void DroppedFrameCounter::OnEndFrame(const viz::BeginFrameArgs& args,
 
 void DroppedFrameCounter::ReportFrames() {
   DCHECK(!report_for_ui_);
-  TRACE_EVENT1("cc", "DroppedFrameCounter::ReportFramesKY", "total_frames_",
-               total_frames_);
+  TRACE_EVENT2("cc", "DroppedFrameCounter::ReportFramesKY", "total_frames_",
+               total_frames_, "this", this);
   const auto total_frames =
       total_counter_->ComputeTotalVisibleFrames(base::TimeTicks::Now());
   auto value1 = std::make_unique<base::trace_event::TracedValue>();
@@ -468,6 +483,7 @@ void DroppedFrameCounter::ReportFrames() {
 
 void DroppedFrameCounter::ReportFramesForUI() {
   DCHECK(report_for_ui_);
+  TRACE_EVENT1("cc", "DroppedFrameCounter::ReportFramesForUIKY", "this", this);
 
   auto* recorder = CustomMetricRecorder::Get();
   if (!recorder)
@@ -497,7 +513,7 @@ void DroppedFrameCounter::SetUkmSmoothnessDestination(
 }
 
 void DroppedFrameCounter::Reset() {
-  TRACE_EVENT0("cc", "DroppedFrameCounter::ResetKY");
+  TRACE_EVENT1("cc", "DroppedFrameCounter::ResetKY", "this", this);
   frame_sorter_.Reset();
   total_frames_ = 0;
   total_partial_ = 0;
@@ -531,8 +547,9 @@ base::TimeDelta DroppedFrameCounter::ComputeCurrentWindowSize() const {
 
 void DroppedFrameCounter::NotifyFrameResult(const viz::BeginFrameArgs& args,
                                             const FrameInfo& frame_info) {
-  TRACE_EVENT1("cc", "DroppedFrameCounter::NotifyFrameResultKY",
-               "sliding_window_interval_", sliding_window_interval_);
+  TRACE_EVENT2("cc", "DroppedFrameCounter::NotifyFrameResultKY",
+               "sliding_window_interval_", sliding_window_interval_, "this",
+               this);
   // Entirely disregard the frames with interval larger than the window --
   // these are violating the assumptions in the below code and should
   // only occur with external frame control, where dropped frame stats
@@ -581,7 +598,7 @@ void DroppedFrameCounter::NotifyFrameResult(const viz::BeginFrameArgs& args,
 }
 
 void DroppedFrameCounter::PopSlidingWindow() {
-  TRACE_EVENT0("cc", "DroppedFrameCounter::PopSlidingWindowKY");
+  TRACE_EVENT1("cc", "DroppedFrameCounter::PopSlidingWindowKY", "this", this);
   const auto removed_args = sliding_window_.front().first;
   const auto removed_frame_info = sliding_window_.front().second;
   UpdateDroppedFrameCountInWindow(removed_frame_info, -1);
@@ -757,9 +774,10 @@ void DroppedFrameCounter::UpdateDroppedFrameCountInWindow(
 
 void DroppedFrameCounter::UpdateMaxPercentDroppedFrame(
     double percent_dropped_frame) {
+  TRACE_EVENT2("cc", "DroppedFrameCounter::UpdateMaxPercentDroppedFrameKY",
+               "this", this, "fcp_received_", fcp_received_);
   if (!fcp_received_)
     return;
-
   const auto fcp_time_delta = latest_sliding_window_start_ - time_fcp_received_;
 
   if (fcp_time_delta > base::Seconds(1))
@@ -778,7 +796,7 @@ void DroppedFrameCounter::UpdateMaxPercentDroppedFrame(
 
 void DroppedFrameCounter::OnFcpReceived() {
   DCHECK(!fcp_received_);
-  TRACE_EVENT0("cc", "DroppedFrameCounter::OnFcpReceivedKY");
+  TRACE_EVENT1("cc", "DroppedFrameCounter::OnFcpReceivedKY", "this", this);
   fcp_received_ = true;
   time_fcp_received_ = base::TimeTicks::Now();
 }

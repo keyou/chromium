@@ -419,6 +419,12 @@ CompositorFrameReporter::CompositorFrameReporter(
       layer_tree_host_id_(layer_tree_host_id),
       global_trackers_(trackers) {
   DCHECK(global_trackers_.dropped_frame_counter);
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetPointer("this", (void*)this);
+  value->SetInteger("smooth_thread", static_cast<int>(smooth_thread));
+  value->SetInteger("scrolling_thread", static_cast<int>(scrolling_thread));
+  TRACE_EVENT1("cc", "ctor:CompositorFrameReporterKY", "value",
+               std::move(value));
   global_trackers_.dropped_frame_counter->OnBeginFrame(
       args, IsScrollActive(active_trackers_));
   DCHECK(IsScrollActive(active_trackers_) ||
@@ -732,7 +738,8 @@ EventMetrics::List CompositorFrameReporter::TakeMainBlockedEventsMetrics() {
 }
 
 void CompositorFrameReporter::TerminateReporter() {
-  TRACE_EVENT0("cc", "CompositorFrameReporter::TerminateReporterKY");
+  TRACE_EVENT1("cc", "CompositorFrameReporter::TerminateReporterKY", "this",
+               (void*)this);
   if (frame_termination_status_ == FrameTerminationStatus::kUnknown)
     TerminateFrame(FrameTerminationStatus::kUnknown, Now());
 
@@ -1609,6 +1616,8 @@ void CompositorFrameReporter::SetPartialUpdateDecider(
     CompositorFrameReporter* decider) {
   DCHECK(decider);
   DCHECK(partial_update_dependents_.empty());
+  TRACE_EVENT1("cc", "CompositorFrameReporter::SetPartialUpdateDeciderKY",
+               "this", (void*)this);
   has_partial_update_ = true;
   partial_update_decider_ = decider->GetWeakPtr();
   decider->partial_update_dependents_.push(GetWeakPtr());
@@ -1638,7 +1647,6 @@ base::WeakPtr<CompositorFrameReporter> CompositorFrameReporter::GetWeakPtr() {
 }
 
 FrameInfo CompositorFrameReporter::GenerateFrameInfo() const {
-  TRACE_EVENT0("cc", "CompositorFrameReporter::GenerateFrameInfoKY");
   FrameFinalState final_state = FrameFinalState::kNoUpdateDesired;
   auto smooth_thread = smooth_thread_;
   auto scrolling_thread = scrolling_thread_;
@@ -1741,7 +1749,26 @@ FrameInfo CompositorFrameReporter::GenerateFrameInfo() const {
       info.total_latency = frame_termination_time_ - args_.frame_time;
     }
   }
-
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("final_state", static_cast<int>(info.final_state));
+  value->SetBoolean("has_missing_content", info.has_missing_content);
+  value->SetInteger("main_thread_response(kMissing=1)",
+                    static_cast<int>(info.main_thread_response));
+  value->SetInteger("scroll_thread", static_cast<int>(info.scroll_thread));
+  value->SetInteger("smooth_thread", static_cast<int>(info.smooth_thread));
+  value->SetInteger("total_latency", info.total_latency.InMicroseconds());
+  value->SetBoolean("IsDroppedAffectingSmoothness",
+                    info.IsDroppedAffectingSmoothness());
+  value->SetBoolean("WasSmoothMainUpdateExpected",
+                    info.WasSmoothMainUpdateExpected());
+  value->SetBoolean("WasSmoothMainUpdateDropped",
+                    info.WasSmoothMainUpdateDropped());
+  value->SetBoolean("WasSmoothCompositorUpdateDropped",
+                    info.WasSmoothCompositorUpdateDropped());
+  value->SetBoolean("IsScrollPrioritizeFrameDropped",
+                    info.IsScrollPrioritizeFrameDropped());
+  TRACE_EVENT1("cc", "CompositorFrameReporter::GenerateFrameInfoKY", "value",
+               std::move(value));
   return info;
 }
 
