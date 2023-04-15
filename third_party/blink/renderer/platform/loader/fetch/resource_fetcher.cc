@@ -753,6 +753,10 @@ void ResourceFetcher::MakePreloadedResourceBlockOnloadIfNeeded(
       non_blocking_loaders_.Contains(resource->Loader())) {
     non_blocking_loaders_.erase(resource->Loader());
     loaders_.insert(resource->Loader());
+    TRACE_EVENT2(
+        "blink", "loaders_.insertKY-MakePreloadedResourceBlockOnloadIfNeeded",
+        "size", loaders_.size(), "res", resource->Url().GetString().Utf8());
+
     if (resource_load_observer_) {
       resource_load_observer_->DidChangeRenderBlockingBehavior(resource,
                                                                params);
@@ -1899,6 +1903,15 @@ void ResourceFetcher::ClearContext() {
 }
 
 int ResourceFetcher::BlockingRequestCount() const {
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("size", loaders_.size());
+  value->BeginArray("resources");
+  for (const auto& loader : loaders_) {
+    value->AppendString(loader->resource_->Url().GetString().Utf8());
+  }
+  value->EndArray();
+  TRACE_EVENT1("blink", "ResourceFetcher::BlockingRequestCountKY", "value",
+               std::move(value));
   return loaders_.size();
 }
 
@@ -2129,6 +2142,9 @@ void ResourceFetcher::MoveResourceLoaderToNonBlocking(ResourceLoader* loader) {
   DCHECK(loaders_.Contains(loader));
   non_blocking_loaders_.insert(loader);
   loaders_.erase(loader);
+  TRACE_EVENT2("blink", "loaders_.erase-MoveResourceLoaderToNonBlockingKY",
+               "size", loaders_.size(), "res",
+               loader->resource_->Url().GetString().Utf8());
 }
 
 bool ResourceFetcher::StartLoad(Resource* resource) {
@@ -2159,7 +2175,8 @@ bool ResourceFetcher::StartLoad(
     RenderBlockingBehavior render_blocking_behavior) {
   DCHECK(resource);
   DCHECK(resource->StillNeedsLoad());
-
+  TRACE_EVENT2("blink", "ResourceFetcher::StartLoadKY", "res",
+               resource->Url().GetString().Utf8(), "policy", policy);
   ResourceLoader* loader = nullptr;
 
   {
@@ -2211,8 +2228,15 @@ bool ResourceFetcher::StartLoad(
         resource->IsLoadEventBlockingResourceType() &&
         policy != ImageLoadBlockingPolicy::kForceNonBlockingLoad) {
       loaders_.insert(loader);
+
+      TRACE_EVENT2("blink", "loaders_.insertKY", "size", loaders_.size(), "res",
+                   loader->resource_->Url().GetString().Utf8());
     } else {
       non_blocking_loaders_.insert(loader);
+
+      TRACE_EVENT2("blink", "non_blocking_loaders.insertKY", "size",
+                   non_blocking_loaders_.size(), "res",
+                   loader->resource_->Url().GetString().Utf8());
     }
     resource->VirtualTimePauser().PauseVirtualTime();
 
@@ -2238,12 +2262,18 @@ bool ResourceFetcher::StartLoad(
 
 void ResourceFetcher::RemoveResourceLoader(ResourceLoader* loader) {
   DCHECK(loader);
-  if (loaders_.Contains(loader))
+  TRACE_EVENT2("blink", "RemoveResourceLoaderKY", "size", loaders_.size(),
+               "res", loader->resource_->Url().GetString().Utf8());
+  if (loaders_.Contains(loader)) {
     loaders_.erase(loader);
-  else if (non_blocking_loaders_.Contains(loader))
+    TRACE_EVENT2("blink", "loaders_.eraseKY-RemoveResourceLoader", "size",
+                 loaders_.size(), "res",
+                 loader->resource_->Url().GetString().Utf8());
+  } else if (non_blocking_loaders_.Contains(loader)) {
     non_blocking_loaders_.erase(loader);
-  else
+  } else {
     NOTREACHED();
+  }
 
   if (loaders_.empty() && non_blocking_loaders_.empty())
     keepalive_loaders_task_handle_.Cancel();

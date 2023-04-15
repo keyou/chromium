@@ -3738,6 +3738,12 @@ static bool AllDescendantsAreComplete(Document* document) {
 }
 
 bool Document::ShouldComplete() {
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetInteger("fetcher_->BlockingRequestCount()",
+                    fetcher_->BlockingRequestCount());
+  value->SetInteger("load_event_delay_count_", load_event_delay_count_);
+  TRACE_EVENT1("blink", "Document::ShouldCompleteKY", "value",
+               std::move(value));
   return parsing_state_ == kFinishedParsing &&
          !fetcher_->BlockingRequestCount() && !IsDelayingLoadEvent() &&
          !javascript_url_task_handle_.IsActive() &&
@@ -7767,10 +7773,21 @@ Element* Document::PointerLockElement() const {
   return nullptr;
 }
 
+void Document::IncrementLoadEventDelayCount() {
+  ++load_event_delay_count_;
+  TRACE_EVENT1("blink", "IncrementLoadEventDelayCountKY",
+               "load_event_delay_count_", load_event_delay_count_);
+  for (int i = 0; i < 1000000; i++) {
+  }
+}
+
 void Document::DecrementLoadEventDelayCount() {
   DCHECK(load_event_delay_count_);
   --load_event_delay_count_;
-
+  TRACE_EVENT1("blink", "DecrementLoadEventDelayCountKY1",
+               "load_event_delay_count_", load_event_delay_count_);
+  for (int i = 0; i < 1000000; i++) {
+  }
   if (!load_event_delay_count_)
     CheckLoadEventSoon();
 }
@@ -7779,6 +7796,10 @@ void Document::DecrementLoadEventDelayCountAndCheckLoadEvent() {
   DCHECK(load_event_delay_count_);
   --load_event_delay_count_;
 
+  TRACE_EVENT1("blink", "DecrementLoadEventDelayCountKY2",
+               "load_event_delay_count_", load_event_delay_count_);
+  for (int i = 0; i < 1000000; i++) {
+  }
   if (!load_event_delay_count_)
     CheckCompleted();
 }
