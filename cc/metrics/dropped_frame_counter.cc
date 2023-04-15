@@ -3,8 +3,6 @@
 // found in the LICENSE file.
 
 #include "cc/metrics/dropped_frame_counter.h"
-#include <_types/_uint32_t.h>
-#include <sys/_types/_u_int32_t.h>
 
 #include <algorithm>
 #include <cmath>
