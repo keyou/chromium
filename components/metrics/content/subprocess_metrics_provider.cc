@@ -15,6 +15,8 @@
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/child_process_data.h"
 
+// #include "content/browser/metrics/histogram_synchronizer.h"
+
 namespace metrics {
 namespace {
 
@@ -68,6 +70,8 @@ void SubprocessMetricsProvider::RegisterSubprocessAllocator(
   if (!allocator)
     return;
 
+  VLOG(1) << "keyou: RegisterSubprocessAllocator: histograms from subprocess #"
+          << id;
   // Map is "MapOwnPointer" so transfer ownership to it.
   allocators_by_id_.AddWithID(std::move(allocator), id);
 }
@@ -87,6 +91,9 @@ void SubprocessMetricsProvider::DeregisterSubprocessAllocator(int id) {
 
   // Merge the last deltas from the allocator before it is released.
   MergeHistogramDeltasFromAllocator(id, allocator.get());
+  // MergeHistogramDeltas();
+  base::StatisticsRecorder::ImportProvidedHistograms();
+  // content::HistogramSynchronizer::FetchHistograms();
 }
 
 void SubprocessMetricsProvider::MergeHistogramDeltasFromAllocator(
@@ -104,8 +111,8 @@ void SubprocessMetricsProvider::MergeHistogramDeltasFromAllocator(
     ++histogram_count;
   }
 
-  DVLOG(1) << "Reported " << histogram_count << " histograms from subprocess #"
-           << id;
+  VLOG(1) << "Reported " << histogram_count << " histograms from subprocess #"
+          << id;
 }
 
 void SubprocessMetricsProvider::MergeHistogramDeltas() {
