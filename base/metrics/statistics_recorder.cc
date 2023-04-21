@@ -9,6 +9,8 @@
 #include "base/at_exit.h"
 #include "base/containers/contains.h"
 #include "base/debug/leak_annotations.h"
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/json/string_escape.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -162,6 +164,11 @@ void StatisticsRecorder::WriteGraph(const std::string& query,
     histogram->WriteAscii(output);
     output->append("\n");
   }
+
+  base::FilePath path;
+  base::CreateTemporaryFile(&path);
+  base::WriteFile(path, *output);
+  LOG(ERROR) << "keyou: WriteGraph: " << path;
 }
 
 // static
