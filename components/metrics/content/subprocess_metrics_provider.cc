@@ -11,6 +11,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/persistent_histogram_allocator.h"
 #include "base/metrics/persistent_memory_allocator.h"
+#include "base/metrics/statistics_recorder.h"
 #include "components/metrics/metrics_service.h"
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/child_process_data.h"
@@ -91,9 +92,11 @@ void SubprocessMetricsProvider::DeregisterSubprocessAllocator(int id) {
 
   // Merge the last deltas from the allocator before it is released.
   MergeHistogramDeltasFromAllocator(id, allocator.get());
-  // MergeHistogramDeltas();
+  MergeHistogramDeltas();
   base::StatisticsRecorder::ImportProvidedHistograms();
   // content::HistogramSynchronizer::FetchHistograms();
+  std::string output;
+  base::StatisticsRecorder::WriteGraph("", &output);
 }
 
 void SubprocessMetricsProvider::MergeHistogramDeltasFromAllocator(

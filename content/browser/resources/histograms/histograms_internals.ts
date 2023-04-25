@@ -15,6 +15,9 @@ const expandedEntries: Set<string> = new Set();
 // Whether the page is in Monitoring mode.
 let inMonitoringMode: boolean = false;
 
+// Force expand histograms after stop monitoring.
+let forceExpandEntries: boolean = false;
+
 /**
  * Returns a boolean that will be true when histogram from subprocesses should
  * be included.
@@ -63,9 +66,14 @@ function enableSubprocessCheckbox(): void {
  * This will get a histogram snapshot as the base to be diffed against.
  */
 function startMonitoring() {
+  forceExpandEntries = false;
+  const startButton = getRequiredElement<HTMLButtonElement>('start');
+  startButton.disabled = true;
+  startButton.textContent = 'Started';
   const stopButton = getRequiredElement<HTMLButtonElement>('stop');
   stopButton.disabled = false;
   stopButton.textContent = 'Stop';
+  expandedEntries.clear();
   disableSubprocessCheckbox();
   clearHistograms();
   sendRequest('startMonitoring').then(fetchDiff);
@@ -113,7 +121,7 @@ function enableMonitoring() {
   getRequiredElement('accumulating_section').style.display = 'none';
   getRequiredElement('monitoring_section').style.display = 'block';
   expandedEntries.clear();
-  startMonitoring();
+  // startMonitoring();
 }
 
 /**
@@ -141,9 +149,15 @@ function stopMonitoring() {
     clearTimeout(fetchDiffScheduler);
     fetchDiffScheduler = null;
   }
-  const stopButton = getRequiredElement<HTMLButtonElement>('stop');
-  stopButton.disabled = true;
-  stopButton.textContent = 'Stopped';
+  forceExpandEntries = true;
+  sendRequest('fetchDiff').then(addHistograms).then(() => {
+    const startButton = getRequiredElement<HTMLButtonElement>('start');
+    startButton.disabled = false;
+    startButton.textContent = 'Start';
+    const stopButton = getRequiredElement<HTMLButtonElement>('stop');
+    stopButton.disabled = true;
+    stopButton.textContent = 'Stopped';
+  });
 }
 
 /**
@@ -215,7 +229,7 @@ function addHistograms(histograms: Histogram[]) {
     link.onclick = (e: Event) => e.stopPropagation();
     clone.querySelector('p')!.textContent = body;
     // If we are not in monitoring mode, default to expand.
-    if (!inMonitoringMode) {
+    if (!inMonitoringMode || forceExpandEntries) {
       expandedEntries.add(name);
     }
     // In monitoring mode, we want to preserve the expanded/collapsed status
@@ -258,6 +272,7 @@ document.addEventListener('DOMContentLoaded', function() {
   getRequiredElement('enable_monitoring').onclick = enableMonitoring;
   getRequiredElement('disable_monitoring').onclick = disableMonitoring;
   getRequiredElement('stop').onclick = stopMonitoring;
+  getRequiredElement('start').onclick = startMonitoring;
   getRequiredElement('subprocess_checkbox').onclick = requestHistograms;
 
   // Enable calling generateHistogramsAsText() from
