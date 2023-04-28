@@ -32,6 +32,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
+#include "base/trace_event/common/trace_event_common.h"
 #include "base/trace_event/trace_conversion_helper.h"
 #include "base/types/optional_util.h"
 #include "build/build_config.h"
@@ -2981,9 +2982,27 @@ void NavigationRequest::OnRequestRedirected(
   if (commit_params_->navigation_timing->redirect_start.is_null()) {
     commit_params_->navigation_timing->redirect_start =
         commit_params_->navigation_timing->fetch_start;
+    TRACE_EVENT_MARK_WITH_TIMESTAMP1(
+        "navigation", "redirect_startKY",
+        commit_params_->navigation_timing->redirect_start, "redirect_start",
+        commit_params_->navigation_timing->redirect_start);
   }
   commit_params_->navigation_timing->redirect_end = base::TimeTicks::Now();
   commit_params_->navigation_timing->fetch_start = base::TimeTicks::Now();
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetString(
+      "fetch_start-redirect_start",
+      std::to_string((commit_params_->navigation_timing->fetch_start -
+                      commit_params_->navigation_timing->redirect_start)
+                         .InMicroseconds()));
+  value->SetString(
+      "fetch_start-navigation_start",
+      std::to_string((commit_params_->navigation_timing->fetch_start -
+                      common_params_->navigation_start)
+                         .InMicroseconds()));
+  TRACE_EVENT2("navigation", "fetch_startKY1", "fetch_start",
+               commit_params_->navigation_timing->fetch_start, "value",
+               std::move(value));
 
   commit_params_->redirect_response.push_back(response_head_.Clone());
   commit_params_->redirect_infos.push_back(redirect_info);
@@ -3771,10 +3790,43 @@ void NavigationRequest::OnResponseStarted(
   // worker ready time if it is greater than the current value to make sure
   // fetch start timing always comes after worker start timing (if a service
   // worker intercepted the navigation).
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetString(
+      "fetch_start_old",
+      std::to_string(
+          commit_params_->navigation_timing->fetch_start.ToInternalValue()));
+  value->SetString(
+      "service_worker_ready_time",
+      std::to_string(response_head_->load_timing.service_worker_ready_time
+                         .ToInternalValue()));
   commit_params_->navigation_timing->fetch_start =
       std::max(commit_params_->navigation_timing->fetch_start,
                response_head_->load_timing.service_worker_ready_time);
+  value->SetString(
+      "fetch_start_new",
+      std::to_string(
+          commit_params_->navigation_timing->fetch_start.ToInternalValue()));
+  value->SetString(
+      "fetch_start-navigation_start",
+      std::to_string((commit_params_->navigation_timing->fetch_start -
+                      common_params_->navigation_start)
+                         .InMicroseconds()));
+  value->SetString(
+      "now-fetch_start",
+      std::to_string((base::TimeTicks::Now() -
+                      commit_params_->navigation_timing->fetch_start)
+                         .InMicroseconds()));
+  value->SetString(
+      "now-navigation_start",
+      std::to_string((base::TimeTicks::Now() - common_params_->navigation_start)
+                         .InMicroseconds()));
+  TRACE_EVENT2("navigation", "fetch_startKY2", "fetch_start",
+               commit_params_->navigation_timing->fetch_start, "value",
+               std::move(value));
 
+  TRACE_EVENT_INSTANT_WITH_TIMESTAMP0(
+      "navigation,rail", "fetchStartKY", TRACE_EVENT_SCOPE_GLOBAL,
+      commit_params_->navigation_timing->fetch_start);
   // A navigation is user activated if it contains a user gesture or the frame
   // received a gesture and the navigation is renderer initiated. If the
   // navigation is browser initiated, it has to come from the context menu.
@@ -4465,6 +4517,11 @@ void NavigationRequest::OnStartChecksComplete(
 
   // Mark the fetch_start (Navigation Timing API).
   commit_params_->navigation_timing->fetch_start = base::TimeTicks::Now();
+  TRACE_EVENT2("navigation", "fetch_startKY3", "fetch_start",
+               commit_params_->navigation_timing->fetch_start,
+               "fetch_start-navigation_start",
+               commit_params_->navigation_timing->fetch_start -
+                   common_params_->navigation_start);
 
   std::unique_ptr<NavigationUIData> navigation_ui_data;
   if (navigation_ui_data_)

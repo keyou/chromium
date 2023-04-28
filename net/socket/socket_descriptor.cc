@@ -5,6 +5,8 @@
 #include "net/socket/socket_descriptor.h"
 
 #include "build/build_config.h"
+#include "perfetto/tracing/string_helpers.h"
+#include "perfetto/tracing/track_event_category_registry.h"
 
 #if BUILDFLAG(IS_WIN)
 #include <ws2tcpip.h>
@@ -17,6 +19,9 @@
 #if BUILDFLAG(IS_APPLE)
 #include <unistd.h>
 #endif
+
+#include "base/logging.h"
+#include "base/trace_event/typed_macros.h"
 
 namespace net {
 
@@ -41,6 +46,13 @@ SocketDescriptor CreatePlatformSocket(int family, int type, int protocol) {
   // SIGPIPE, the net stack may be used in other consumers which do not do
   // this. SO_NOSIGPIPE is a Mac-only API. On Linux, it is a flag on send.
   if (result != kInvalidSocket) {
+    TRACE_EVENT("net", "net::CreatePlatformSocketKY", "socket_fd_",
+                (type == SOCK_DGRAM ? "create_udp_fd_" : "create_tcp_fd_") +
+                    std::to_string(result),
+                "type(TCP=1,UDP=2)", type);
+
+    LOG(ERROR) << "keyou: net::CreatePlatformSocket: fd=" << result
+               << ", type=" << type;
     int value = 1;
     if (setsockopt(result, SOL_SOCKET, SO_NOSIGPIPE, &value, sizeof(value))) {
       close(result);

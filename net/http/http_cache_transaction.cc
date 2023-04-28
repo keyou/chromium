@@ -4,6 +4,7 @@
 
 #include "net/http/http_cache_transaction.h"
 
+#include "base/debug/stack_trace.h"
 #include "build/build_config.h"  // For IS_POSIX
 
 #if BUILDFLAG(IS_POSIX)
@@ -59,6 +60,8 @@
 #include "net/log/net_log_event_type.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_config_service.h"
+
+#include "base/trace_event/traced_value.h"
 
 using base::Time;
 using base::TimeTicks;
@@ -529,6 +532,8 @@ bool HttpCache::Transaction::GetLoadTimingInfo(
   if (first_cache_access_since_.is_null())
     return false;
 
+  TRACE_EVENT1("navigation", "requestStartKY-httpcache-timing", "requestStart",
+               first_cache_access_since_);
   // If the cache entry was opened, return that time.
   load_timing_info->send_start = first_cache_access_since_;
   // This time doesn't make much sense when reading from the cache, so just use
@@ -1161,6 +1166,8 @@ int HttpCache::Transaction::DoOpenOrCreateEntry() {
   cache_pending_ = true;
   net_log_.BeginEvent(NetLogEventType::HTTP_CACHE_OPEN_OR_CREATE_ENTRY);
   first_cache_access_since_ = TimeTicks::Now();
+  TRACE_EVENT1("navigation", "requestStartKY-httpcache1", "requestStart",
+               first_cache_access_since_);
   const bool has_opened_or_created_entry = has_opened_or_created_entry_;
   has_opened_or_created_entry_ = true;
   record_entry_open_or_creation_time_ = false;
@@ -1316,8 +1323,11 @@ int HttpCache::Transaction::DoDoomEntry() {
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
   TransitionToState(STATE_DOOM_ENTRY_COMPLETE);
   cache_pending_ = true;
-  if (first_cache_access_since_.is_null())
+  if (first_cache_access_since_.is_null()) {
     first_cache_access_since_ = TimeTicks::Now();
+    TRACE_EVENT1("navigation", "requestStartKY-httpcache2", "requestStart",
+                 first_cache_access_since_);
+  }
   net_log_.BeginEvent(NetLogEventType::HTTP_CACHE_DOOM_ENTRY);
   return cache_->DoomEntry(cache_key_, this);
 }
@@ -1847,9 +1857,10 @@ int HttpCache::Transaction::DoCacheUpdateStaleWhileRevalidateTimeoutComplete(
 }
 
 int HttpCache::Transaction::DoSendRequest() {
-  TRACE_EVENT_WITH_FLOW0("net", "HttpCacheTransaction::DoSendRequest",
+  TRACE_EVENT_WITH_FLOW1("net", "HttpCacheTransaction::DoSendRequest",
                          TRACE_ID_LOCAL(trace_id_),
-                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT,
+                         "url", request_->url);
   DCHECK(mode_ & WRITE || mode_ == NONE);
   DCHECK(!network_trans_.get());
 
@@ -1886,10 +1897,13 @@ int HttpCache::Transaction::DoSendRequest() {
 }
 
 int HttpCache::Transaction::DoSendRequestComplete(int result) {
-  TRACE_EVENT_WITH_FLOW1("net", "HttpCacheTransaction::DoSendRequestComplete",
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+  value->SetString("url", request_->url.spec());
+  // value->SetString("bt", base::debug::StackTrace().ToString());
+  TRACE_EVENT_WITH_FLOW2("net", "HttpCacheTransaction::DoSendRequestComplete",
                          TRACE_ID_LOCAL(trace_id_),
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT,
-                         "result", result);
+                         "result", result, "value", std::move(value));
   if (!cache_.get()) {
     TransitionToState(STATE_FINISH_HEADERS);
     return ERR_UNEXPECTED;

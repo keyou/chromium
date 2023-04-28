@@ -6,6 +6,8 @@
 
 #include "third_party/blink/public/mojom/navigation/navigation_params.mojom.h"
 
+#include "base/trace_event/trace_event.h"
+
 namespace blink {
 
 mojom::CommonNavigationParamsPtr CreateCommonNavigationParams() {
@@ -13,6 +15,8 @@ mojom::CommonNavigationParamsPtr CreateCommonNavigationParams() {
   common_params->referrer = mojom::Referrer::New();
   common_params->navigation_start = base::TimeTicks::Now();
   common_params->source_location = network::mojom::SourceLocation::New();
+  TRACE_EVENT1("navigation", "navigation_startKY2", "navigation_start",
+               common_params->navigation_start);
 
   return common_params;
 }

@@ -196,6 +196,9 @@ int SocketPosix::Connect(const SockaddrStorage& address,
   DCHECK(!waiting_connect_);
   DCHECK(!callback.is_null());
 
+  TRACE_EVENT1(NetTracingCategory(), "SocketPosix::ConnectKY", "socket_fd_",
+               "connect_tcp_fd_" + std::to_string(socket_fd_));
+  LOG(ERROR) << "keyou: SocketPosix::Connect: fd=" << socket_fd_;
   SetPeerAddress(address);
 
   int rv = DoConnect();
@@ -401,7 +404,9 @@ bool SocketPosix::HasPeerAddress() const {
 
 void SocketPosix::Close() {
   DCHECK(thread_checker_.CalledOnValidThread());
-
+  TRACE_EVENT1("net", "SocketPosix::CloseKY", "fd",
+               "close_tcp_fd_" + std::to_string(socket_fd_));
+  LOG(ERROR) << "keyou: SocketPosix::Close: fd=" << socket_fd_;
   StopWatchingAndCleanUp(true /* close_socket */);
 }
 
@@ -410,8 +415,8 @@ void SocketPosix::DetachFromThread() {
 }
 
 void SocketPosix::OnFileCanReadWithoutBlocking(int fd) {
-  TRACE_EVENT0(NetTracingCategory(),
-               "SocketPosix::OnFileCanReadWithoutBlocking");
+  TRACE_EVENT1(NetTracingCategory(),
+               "SocketPosix::OnFileCanReadWithoutBlocking", "fdKY", fd);
   if (!accept_callback_.is_null()) {
     AcceptCompleted();
   } else {
@@ -422,6 +427,8 @@ void SocketPosix::OnFileCanReadWithoutBlocking(int fd) {
 
 void SocketPosix::OnFileCanWriteWithoutBlocking(int fd) {
   DCHECK(!write_callback_.is_null());
+  TRACE_EVENT1(NetTracingCategory(),
+               "SocketPosix::OnFileCanWriteWithoutBlockingKY", "fd", fd);
   if (waiting_connect_) {
     ConnectCompleted();
   } else {
@@ -486,6 +493,8 @@ void SocketPosix::ConnectCompleted() {
 }
 
 int SocketPosix::DoRead(IOBuffer* buf, int buf_len) {
+  TRACE_EVENT1(NetTracingCategory(), "SocketPosix::DoReadKY", "socket_fd_",
+               "read_tcp_fd_" + std::to_string(socket_fd_));
   int rv = HANDLE_EINTR(read(socket_fd_, buf->data(), buf_len));
   return rv >= 0 ? rv : MapSystemError(errno);
 }
@@ -516,6 +525,8 @@ void SocketPosix::ReadCompleted() {
 }
 
 int SocketPosix::DoWrite(IOBuffer* buf, int buf_len) {
+  TRACE_EVENT1(NetTracingCategory(), "SocketPosix::DoWriteKY", "socket_fd_",
+               "write_tcp_fd_" + std::to_string(socket_fd_));
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   // Disable SIGPIPE for this write. Although Chromium globally disables
   // SIGPIPE, the net stack may be used in other consumers which do not do

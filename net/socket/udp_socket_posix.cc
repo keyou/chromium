@@ -229,7 +229,9 @@ void UDPSocketPosix::Close() {
 
   if (socket_ == kInvalidSocket)
     return;
-
+  TRACE_EVENT1("net", "UDPSocketPosix::CloseKY", "fd",
+               "close_udp_fd_" + std::to_string(socket_));
+  LOG(ERROR) << "keyou: UDPSocketPosix::Close: fd=" << socket_;
   // Zero out any pending read/write callback state.
   read_buf_.reset();
   read_buf_len_ = 0;
@@ -719,6 +721,8 @@ void UDPSocketPosix::LogWrite(int result,
 int UDPSocketPosix::InternalRecvFrom(IOBuffer* buf,
                                      int buf_len,
                                      IPEndPoint* address) {
+  TRACE_EVENT1("net", "UDPSocketPosix::InternalRecvFromKY", "read_udp_fd_",
+               socket_);
   // If the socket is connected and the remote address is known
   // use the more efficient method that uses read() instead of recvmsg().
   if (experimental_recv_optimization_enabled_ && is_connected_ &&
@@ -801,6 +805,8 @@ int UDPSocketPosix::InternalRecvFromNonConnectedSocket(IOBuffer* buf,
 int UDPSocketPosix::InternalSendTo(IOBuffer* buf,
                                    int buf_len,
                                    const IPEndPoint* address) {
+  TRACE_EVENT1("net", "UDPSocketPosix::InternalSendToKY", "write_udp_fd_",
+               socket_);
   SockaddrStorage storage;
   struct sockaddr* addr = storage.addr;
   if (!address) {

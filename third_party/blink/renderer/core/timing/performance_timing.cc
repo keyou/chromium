@@ -201,6 +201,11 @@ uint64_t PerformanceTiming::requestStart() const {
   if (!timing || timing->SendStart().is_null())
     return connectEnd();
 
+  DocumentLoadTiming* dom_timing = GetDocumentLoadTiming();
+  TRACE_EVENT_MARK_WITH_TIMESTAMP2(
+      "blink.user_timing,rail", "requestStartKY-timing", timing->SendStart(),
+      "requestStart", timing->SendStart(), "requestStart-navigationStart",
+      timing->SendStart() - dom_timing->NavigationStart());
   return MonotonicTimeToIntegerMilliseconds(timing->SendStart());
 }
 
@@ -231,6 +236,11 @@ uint64_t PerformanceTiming::domLoading() const {
   if (!timing)
     return fetchStart();
 
+  DocumentLoadTiming* dom_timing = GetDocumentLoadTiming();
+  TRACE_EVENT_MARK_WITH_TIMESTAMP2(
+      "blink.user_timing,rail", "domLoadingKY", timing->DomLoading(),
+      "domLoading", timing->DomLoading(), "domLoading-navigationStart",
+      timing->DomLoading() - dom_timing->NavigationStart());
   return MonotonicTimeToIntegerMilliseconds(timing->DomLoading());
 }
 

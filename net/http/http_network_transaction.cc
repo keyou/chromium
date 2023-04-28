@@ -78,6 +78,8 @@
 #include "net/reporting/reporting_service.h"
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
+#include "base/trace_event/trace_event.h"
+
 namespace net {
 
 namespace {
@@ -461,6 +463,9 @@ bool HttpNetworkTransaction::GetLoadTimingInfo(
   load_timing_info->proxy_resolve_end = proxy_info_.proxy_resolve_end_time();
   load_timing_info->send_start = send_start_time_;
   load_timing_info->send_end = send_end_time_;
+
+  TRACE_EVENT1("navigation", "requestStartKY-httpnetwork-timing",
+               "requestStart", send_start_time_);
   return true;
 }
 
@@ -1072,9 +1077,11 @@ int HttpNetworkTransaction::DoBuildRequestComplete(int result) {
 }
 
 int HttpNetworkTransaction::DoSendRequest() {
+  TRACE_EVENT0("net", "HttpNetworkTransaction::DoSendRequestKY");
   send_start_time_ = base::TimeTicks::Now();
   next_state_ = STATE_SEND_REQUEST_COMPLETE;
-
+  TRACE_EVENT1("navigation", "requestStartKY-httpnetwork1", "requestStart",
+               send_start_time_);
   stream_->SetRequestIdempotency(request_->idempotency);
   return stream_->SendRequest(request_headers_, &response_, io_callback_);
 }
@@ -1694,6 +1701,8 @@ void HttpNetworkTransaction::ResetStateForAuthRestart() {
   send_start_time_ = base::TimeTicks();
   send_end_time_ = base::TimeTicks();
 
+  TRACE_EVENT1("navigation", "requestStartKY-httpnetwork2", "requestStart",
+               send_start_time_);
   pending_auth_target_ = HttpAuth::AUTH_NONE;
   read_buf_ = nullptr;
   read_buf_len_ = 0;

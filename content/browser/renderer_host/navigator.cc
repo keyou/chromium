@@ -975,6 +975,8 @@ void Navigator::BeforeUnloadCompleted(FrameTreeNode* frame_tree_node,
   // Update the navigation start: it should be when it was determined that the
   // navigation will proceed.
   navigation_request->set_navigation_start_time(proceed_time);
+  TRACE_EVENT1("navigation", "navigation_startKY", "proceed_time",
+               proceed_time);
 
   DCHECK_EQ(NavigationRequest::WAITING_FOR_RENDERER_RESPONSE,
             navigation_request->state());

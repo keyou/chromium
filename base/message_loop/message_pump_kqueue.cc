@@ -17,6 +17,8 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/time/time_override.h"
 
+#include "base/trace_event/trace_event.h"
+
 namespace base {
 
 namespace {
@@ -265,6 +267,8 @@ bool MessagePumpKqueue::WatchMachReceivePort(
   }
   ++event_count_;
 
+  TRACE_EVENT1("net", "MessagePumpKqueue::WatchMachReceivePortKY", "port",
+               port);
   controller->Init(weak_factory_.GetWeakPtr(), port, delegate);
   port_controllers_.AddWithID(controller, port);
 
@@ -293,6 +297,7 @@ bool MessagePumpKqueue::WatchFileDescriptor(int fd,
   base_event.ident = static_cast<uint64_t>(fd);
   base_event.flags = EV_ADD | (!persistent ? EV_ONESHOT : 0);
 
+  TRACE_EVENT1("net", "MessagePumpKqueue::WatchFileDescriptorKY", "fd", fd);
   if (mode & Mode::WATCH_READ) {
     base_event.filter = EVFILT_READ;
     base_event.udata = fd_controllers_.Add(controller);
@@ -361,6 +366,8 @@ bool MessagePumpKqueue::StopWatchingMachPort(
     return false;
   }
 
+  TRACE_EVENT1("net", "MessagePumpKqueue::StopWatchingMachPortKY", "port",
+               port);
   return true;
 }
 
@@ -373,6 +380,8 @@ bool MessagePumpKqueue::StopWatchingFileDescriptor(
   if (fd < 0)
     return true;
 
+  TRACE_EVENT1("net", "MessagePumpKqueue::StopWatchingFileDescriptorKY", "fd",
+               fd);
   std::vector<kevent64_s> events;
 
   kevent64_s base_event{};
@@ -436,12 +445,13 @@ bool MessagePumpKqueue::DoInternalWork(Delegate* delegate,
 
 bool MessagePumpKqueue::ProcessEvents(Delegate* delegate, size_t count) {
   bool did_work = false;
-
   for (size_t i = 0; i < count; ++i) {
     auto* event = &events_[i];
     if (event->filter == EVFILT_READ || event->filter == EVFILT_WRITE) {
       did_work = true;
 
+      TRACE_EVENT2("net", "MessagePumpKqueue::ProcessEventsKY", "count", count,
+                   "fd", event->ident);
       FdWatchController* controller = fd_controllers_.Lookup(event->udata);
       if (!controller) {
         // The controller was removed by some other work callout before
@@ -462,9 +472,13 @@ bool MessagePumpKqueue::ProcessEvents(Delegate* delegate, size_t count) {
       auto scoped_do_work_item = delegate->BeginWorkItem();
       // WatchFileDescriptor() originally upcasts event->ident from an int.
       if (event->filter == EVFILT_READ) {
+        TRACE_EVENT1("net", "fd_watcher->OnFileCanReadWithoutBlockingKY", "fd",
+                     event->ident);
         fd_watcher->OnFileCanReadWithoutBlocking(
             static_cast<int>(event->ident));
       } else if (event->filter == EVFILT_WRITE) {
+        TRACE_EVENT1("net", "fd_watcher->OnFileCanWriteWithoutBlocking", "fd",
+                     event->ident);
         fd_watcher->OnFileCanWriteWithoutBlocking(
             static_cast<int>(event->ident));
       }
