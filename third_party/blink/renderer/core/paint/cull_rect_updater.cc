@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/paint/cull_rect_updater.h"
 
 #include "base/auto_reset.h"
+#include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
@@ -186,6 +187,8 @@ void CullRectUpdater::Update() {
 
 #if DCHECK_IS_ON()
   if (VLOG_IS_ON(2)) {
+    VLOG(2) << "DOM tree:";
+    ShowTree(starting_layer_.EnclosingNode());
     VLOG(2) << "PaintLayer tree after cull rect update:";
     ShowLayerTree(&starting_layer_);
   }

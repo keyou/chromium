@@ -13,7 +13,7 @@
 namespace blink {
 
 // Provides access to a subset of paint chunks in a PaintArtifact.
-class PaintChunkSubset {
+class PLATFORM_EXPORT PaintChunkSubset {
   DISALLOW_NEW();
 
  public:

@@ -20,6 +20,27 @@ TEST_F(ScrollableAreaPainterTest, OverlayScrollbars) {
   GetDocument().GetFrame()->GetSettings()->SetPreferCompositingToLCDTextEnabled(
       true);
   SetBodyInnerHTML(R"HTML(
+    <div>xxxxxxxxxxxxxxx</div>
+    <div style="clip-path: circle(); background-color: red; width: 100px;height: 100px;
+      z-index: 10061;
+      position: fixed;
+      top: 0px;
+      left: 0px;
+      pointer-events: none;
+    ">aaaaaaaaaaaa</div>
+  )HTML");
+  auto chunks = ContentPaintChunks();
+  // LOG(INFO) << "chunks: " << chunks;
+  for (auto&& chunk : chunks) {
+    LOG(INFO) << "chunk: " << chunk << std::endl
+              << chunk.properties.ToTreeString().Utf8();
+  }
+}
+
+TEST_F(ScrollableAreaPainterTest, OverlayScrollbars2) {
+  GetDocument().GetFrame()->GetSettings()->SetPreferCompositingToLCDTextEnabled(
+      true);
+  SetBodyInnerHTML(R"HTML(
     <div id="target" style="overflow: scroll; width: 50px; height: 50px">
       <div style="width: 200px; height: 200px"></div>
     </div>
