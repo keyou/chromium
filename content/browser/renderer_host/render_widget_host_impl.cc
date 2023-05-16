@@ -1640,7 +1640,7 @@ void RenderWidgetHostImpl::ForwardGestureEventWithLatencyInfo(
         // trigger any scrolls (e.g. the page is not scrollable). In such cases,
         // we do not want to report the peak-memory usage metric. So it is
         // canceled here.
-        scroll_peak_gpu_mem_tracker_->Cancel();
+        // scroll_peak_gpu_mem_tracker_->Cancel();
       }
 
       view_->set_is_currently_scrolling_viewport(false);

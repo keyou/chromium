@@ -675,6 +675,10 @@ void PaintArtifactCompositor::Update(
   UpdateCompositorViewportProperties(viewport_properties, property_tree_manager,
                                      host);
 
+  DVLOG(2) << "keyou: PaintArtifactCompositor::Update() done\n"
+           << "Pending layers:\n"
+           << GetPendingLayersAsJSON()->ToPrettyJSONString().Utf8();
+
   // With ScrollUnification, we ensure a cc::ScrollNode for all
   // |scroll_translation_nodes|.
   if (unification_enabled)

@@ -22,7 +22,7 @@ namespace viz {
 namespace {
 
 constexpr int kMaxListToProcess = 32;
-constexpr int kMaxQuadsPerFrame = 8;
+constexpr int kMaxQuadsPerFrame = 800;
 
 struct StackFrame {
   StackFrame(int list_index,

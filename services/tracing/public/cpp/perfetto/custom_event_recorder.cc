@@ -317,6 +317,8 @@ void CustomEventRecorder::OnMetricsSampleCallback(
     const char* histogram_name,
     uint64_t name_hash,
     base::HistogramBase::Sample sample) {
+  TRACE_EVENT2("toplevel", "OnMetricsSampleCallbackKY", "name", histogram_name,
+               "sample", sample);
   TRACE_EVENT_INSTANT(
       TRACE_DISABLED_BY_DEFAULT("histogram_samples"), "HistogramSample",
       [&](perfetto::EventContext ctx) {

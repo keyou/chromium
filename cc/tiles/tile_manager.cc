@@ -905,6 +905,14 @@ TileManager::PrioritizedWorkToSchedule TileManager::AssignGpuMemoryToTiles() {
   memory_stats_from_last_assign_.total_budget_in_bytes =
       global_state_.hard_memory_limit_in_bytes;
   memory_stats_from_last_assign_.total_bytes_used = memory_usage.memory_bytes();
+  auto memory_used =
+      memory_stats_from_last_assign_.total_bytes_used / 1024.f / 1024.f;
+  auto memory_limit =
+      memory_stats_from_last_assign_.total_budget_in_bytes / 1024.f / 1024.f;
+  TRACE_EVENT2("cc", "memory_usageKY", "used(MB)", memory_used, "limit(MB)",
+               memory_limit);
+  VLOG(2) << "keyou: memory_usage: " << memory_used
+          << ", limit: " << memory_limit;
   DCHECK_GE(memory_stats_from_last_assign_.total_bytes_used, 0);
   memory_stats_from_last_assign_.had_enough_memory =
       had_enough_memory_to_schedule_tiles_needed_now;

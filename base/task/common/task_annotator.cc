@@ -241,6 +241,8 @@ void TaskAnnotator::MaybeEmitIPCHashAndDelay(perfetto::EventContext& ctx,
     annotator->set_task_delay_us(static_cast<uint64_t>(
         (task.delayed_run_time - task.queue_time).InMicroseconds()));
   }
+  annotator->set_task_delay_us(static_cast<uint64_t>(
+      (base::TimeTicks::Now() - task.queue_time).InMicroseconds()));
 }
 #endif  //  BUILDFLAG(ENABLE_BASE_TRACING)
 
