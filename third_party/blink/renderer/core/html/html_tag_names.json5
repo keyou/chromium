@@ -35,6 +35,11 @@
       interfaceName: "HTMLElement",
     },
     {
+      name: "scroller",
+      // interfaceName: "HTMLElement",
+      interfaceHeaderDir: "third_party/blink/renderer/core/html/scroller",
+    },
+    {
       name: "aside",
       interfaceName: "HTMLElement",
     },
