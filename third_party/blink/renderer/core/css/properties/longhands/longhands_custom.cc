@@ -2522,6 +2522,31 @@ void Direction::ApplyValue(StyleResolverState& state,
       To<CSSIdentifierValue>(value).ConvertTo<TextDirection>());
 }
 
+const CSSValue* KeyouLayout::ParseSingleValue(
+    CSSParserTokenRange& range,
+    const CSSParserContext&,
+    const CSSParserLocalContext&) const {
+  auto* result = css_parsing_utils::ConsumeIdent(range);
+  LOG(ERROR) << "keyou: KeyouLayout::ParseSingleValue: "
+             << static_cast<int>(result->ConvertTo<EKeyouLayout>());
+  return result;
+}
+
+const CSSValue* KeyouLayout::CSSValueFromComputedStyleInternal(
+    const ComputedStyle& style,
+    const LayoutObject*,
+    bool allow_visited_style) const {
+  LOG(ERROR) << "keyou: KeyouLayout::CSSValueFromComputedStyleInternal: "
+             << static_cast<int>(style.KeyouLayout());
+  if (style.KeyouLayout() == EKeyouLayout::kNone) {
+    return CSSIdentifierValue::Create(CSSValueID::kNone);
+  }
+  return CSSIdentifierValue::Create(style.KeyouLayout() ==
+                                            EKeyouLayout::kKeyouLayout1
+                                        ? CSSValueID::kKeyouLayout1
+                                        : CSSValueID::kKeyouLayout2);
+}
+
 namespace {
 
 static bool IsDisplayOutside(CSSValueID id) {
@@ -2533,6 +2558,9 @@ static bool IsDisplayInside(CSSValueID id) {
     return true;
   if (id == CSSValueID::kMath)
     return RuntimeEnabledFeatures::MathMLCoreEnabled();
+  if (id == CSSValueID::kKeyouDynamicBlock) {
+    return true;
+  }
   return false;
 }
 

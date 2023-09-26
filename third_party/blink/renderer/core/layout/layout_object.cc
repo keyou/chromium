@@ -36,6 +36,7 @@
 #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/animation/element_animations.h"
+#include "third_party/blink/renderer/core/animation/interpolable_value.h"
 #include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/css/resolver/style_adjuster.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
@@ -2544,6 +2545,11 @@ void LayoutObject::SetStyle(scoped_refptr<const ComputedStyle> style,
   NOT_DESTROYED();
   if (style_ == style)
     return;
+
+  auto node_str = GetNode()->ToString();
+  LOG(ERROR) << "keyou: SetStyle: node: " << node_str
+             << ", style: " << static_cast<int>(style->KeyouLayout()) << ", "
+             << static_cast<int>(style->OverflowY());
 
   if (apply_changes == ApplyStyleChanges::kNo) {
     SetStyleInternal(std::move(style));

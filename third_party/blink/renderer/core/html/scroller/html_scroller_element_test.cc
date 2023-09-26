@@ -107,4 +107,21 @@ TEST_F(HTMLScrollerElementTest, scroller) {
   // EXPECT_EQ(500, image->GetResourceWidth().width);
 }
 
+TEST_F(HTMLScrollerElementTest, scroller_style) {
+  LOG(ERROR) << "keyou: SetHtmlInnerHTML";
+  // Load <object> element with a <embed> child.
+  // This can be seen on sites with Flash cookies,
+  // for example on www.yandex.ru
+  SetHtmlInnerHTML(R"HTML(
+    <scroller id="scrollerId" style="-keyou-layout: -keyou-layout2; app-region: drag;"></scroller>
+  )HTML");
+
+  auto* scroller_element = GetElementById("scrollerId");
+  ASSERT_TRUE(scroller_element);
+  auto* scroller = To<HTMLScrollerElement>(scroller_element);
+  auto* computed_style = scroller->GetComputedStyle();
+  EXPECT_EQ(computed_style->KeyouLayout(), EKeyouLayout::kKeyouLayout2);
+  EXPECT_EQ(computed_style->DraggableRegionMode(), EDraggableRegionMode::kDrag);
+}
+
 }  // namespace blink

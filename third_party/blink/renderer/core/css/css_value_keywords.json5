@@ -480,6 +480,7 @@
     "flex",
     "grid",
     //"math",
+    "-keyou-dynamic-block",
     // The order must match the order found in IsDisplayBox().
     "contents",
     //none
@@ -504,6 +505,11 @@
     "layout",
     "inline-layout",
     "list-item",
+    //
+    // -keyou-layout
+    //
+    "-keyou-layout1",
+    "-keyou-layout2",
     //
     // cursor
     // The order of this enum must match the order found in CSSPropertyParser::ConsumeCursor().

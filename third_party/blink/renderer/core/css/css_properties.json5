@@ -2627,7 +2627,7 @@
         "table-row-group", "table-header-group", "table-footer-group",
         "table-row", "table-column-group", "table-column", "table-cell",
         "table-caption", "-webkit-box", "-webkit-inline-box", "flex",
-        "inline-flex", "grid", "inline-grid", "contents", "flow-root", "none"
+        "inline-flex", "grid", "inline-grid", "contents", "flow-root", "-keyou-dynamic-block", "none"
       ],
       typedom_types: ["Keyword"],
       style_builder_custom_functions: ["initial", "inherit", "value"],
@@ -2635,6 +2635,17 @@
       // (e.g. OriginalDisplay is based on display, and setting float can cause blockification),
       // so we turn off incremental style for all them all.
       supports_incremental_style: false,
+    },
+    {
+      name: "-keyou-layout",
+      // property_methods: ["CSSValueFromComputedStyleInternal"],
+      property_methods: ["ParseSingleValue", "CSSValueFromComputedStyleInternal"],
+      keywords: ["-keyou-layout1", "-keyou-layout2", "none"],
+      field_template: "keyword",
+      typedom_types: ["Keyword"],
+      // style_builder_custom_functions: ["initial", "inherit", "value"],
+      supports_incremental_style: false,
+      default_value: "-keyou-layout1",
     },
     {
       name: "dominant-baseline",
