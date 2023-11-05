@@ -6,13 +6,16 @@
 
 #include <limits>
 #include <memory>
+#include <sstream>
 
+#include "base/debug/stack_trace.h"
 #include "base/files/file_util.h"
 #include "base/hash/hash.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "net/base/features.h"
 #include "net/base/io_buffer.h"
@@ -321,6 +324,8 @@ EntryImpl::EntryImpl(BackendImpl* backend, Addr address, bool read_only)
       node_(nullptr, Addr(0)),
       backend_(backend->GetWeakPtr()),
       read_only_(read_only) {
+  TRACE_EVENT2("disk_cache", "EntryImpl::ctorKY", "this", (void*)this,
+               "address", address.ToString());
   entry_.LazyInit(backend->File(address), address);
 }
 
@@ -337,6 +342,8 @@ int EntryImpl::ReadDataImpl(int index,
                             IOBuffer* buf,
                             int buf_len,
                             CompletionOnceCallback callback) {
+  TRACE_EVENT2("disk_cache", "EntryImpl::ReadDataImplKY", "index", index,
+               "buf_len", buf_len);
   if (net_log_.IsCapturing()) {
     NetLogReadWriteData(net_log_, net::NetLogEventType::ENTRY_READ_DATA,
                         net::NetLogEventPhase::BEGIN, index, offset, buf_len,
@@ -790,6 +797,7 @@ void EntryImpl::Close() {
 }
 
 std::string EntryImpl::GetKey() const {
+  TRACE_EVENT1("disk_cache", "EntryImpl::GetKeyKY", "this", (void*)this);
   CacheEntryBlock* entry = const_cast<CacheEntryBlock*>(&entry_);
   int key_len = entry->Data()->key_len;
   if (key_len <= kMaxInternalKeyLength)
@@ -850,6 +858,23 @@ int EntryImpl::ReadData(int index,
                         IOBuffer* buf,
                         int buf_len,
                         CompletionOnceCallback callback) {
+  std::ostringstream ss;
+  ss << "index: " << index << ", offset: " << offset << ", buf_len: " << buf_len
+     << ", entry-address: " << entry()->address().ToString()
+     << ", entry-size: " << entry()->size() << ", key: " << GetKey()
+     << ", data_size: ";
+
+  for (int size : this->entry()->Data()->data_size) {
+    ss << size << ", ";
+  }
+
+  for (int addr : this->entry()->Data()->data_addr) {
+    ss << Addr(addr).ToString() << " || ";
+  }
+
+  TRACE_EVENT2("disk_cache", "EntryImpl::ReadDataKY", "this", (void*)this,
+               "params", ss.str());
+  LOG(ERROR) << "keyou: " << base::debug::StackTrace().ToString();
   if (callback.is_null())
     return ReadDataImpl(index, offset, buf, buf_len, std::move(callback));
 

@@ -12,7 +12,7 @@ namespace disk_cache {
 
 // Uncomment this line to generate a debug build of stress_cache with checks
 // to ensure that we are not producing corrupt entries.
-// #define NET_BUILD_STRESS_CACHE 1
+#define NET_BUILD_STRESS_CACHE 1
 
 // Uncomment this line to perform extended integrity checks during init. It is
 // not recommended to enable this option unless some corruption is being tracked

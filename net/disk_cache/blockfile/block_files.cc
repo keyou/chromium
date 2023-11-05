@@ -5,8 +5,11 @@
 #include "net/disk_cache/blockfile/block_files.h"
 
 #include <atomic>
+#include <cstdint>
+#include <iomanip>
 #include <limits>
 #include <memory>
+#include <sstream>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -15,6 +18,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
+#include "net/disk_cache/blockfile/disk_format_base.h"
 #include "net/disk_cache/blockfile/file_lock.h"
 #include "net/disk_cache/blockfile/stress_support.h"
 #include "net/disk_cache/cache_util.h"
@@ -289,6 +294,8 @@ bool BlockFiles::Init(bool create_files) {
 }
 
 MappedFile* BlockFiles::GetFile(Addr address) {
+  TRACE_EVENT1("disk_cache", "BlockFiles::GetFileKY", "address",
+               address.ToString());
   DCHECK(thread_checker_->CalledOnValidThread());
   DCHECK_GE(block_files_.size(),
             static_cast<size_t>(kFirstAdditionalBlockFile));
@@ -377,6 +384,29 @@ void BlockFiles::CloseFiles() {
   block_files_.clear();
 }
 
+std::string char2str(const void* data, int length) {
+  std::ostringstream oss;
+  oss << length << " : ";
+
+  const unsigned char* ptr = static_cast<const unsigned char*>(data);
+  for (int i = 0; i < length; i++) {
+    if (std::isprint(ptr[i])) {
+      oss << ptr[i];
+    } else if (ptr[i] == 0x0a) {
+      oss << std::endl;
+    } else {
+      oss << std::hex << std::setw(2) << std::setfill('0')
+          << static_cast<unsigned>(ptr[i]);
+    }
+  }
+
+  return oss.str();
+}
+
+std::string str2str(const std::string& data) {
+  return char2str(data.c_str(), data.length());
+}
+
 bool BlockFiles::IsValid(Addr address) {
 #ifdef NDEBUG
   return true;
@@ -392,14 +422,22 @@ bool BlockFiles::IsValid(Addr address) {
   bool rv = header.UsedMapBlock(address.start_block(), address.num_blocks());
   DCHECK(rv);
 
-  static bool read_contents = false;
+  static bool read_contents = true;
   if (read_contents) {
     auto buffer =
         std::make_unique<char[]>(Addr::BlockSizeForFileType(BLOCK_4K) * 4);
     size_t size = address.BlockSize() * address.num_blocks();
     size_t offset = address.start_block() * address.BlockSize() +
                     kBlockHeaderSize;
+    std::ostringstream ss;
+    ss << "size: " << size << ", block_size: " << address.BlockSize()
+       << ", num_blocks: " << address.num_blocks() << ", offset: " << offset
+       << ", start_block: " << address.start_block()
+       << ", header_size: " << kBlockHeaderSize;
     bool ok = file->Read(buffer.get(), size, offset);
+
+    TRACE_EVENT2("disk_cache", "BlockFiles::IsValidKY", "address", ss.str(),
+                 "data", char2str(buffer.get(), size));
     DCHECK(ok);
   }
 

@@ -6,6 +6,9 @@
 
 #include <algorithm>
 #include <memory>
+#include <string>
+
+#include "base/trace_event/trace_event.h"
 
 namespace disk_cache {
 
@@ -13,6 +16,9 @@ namespace disk_cache {
 
 bool MappedFile::Load(const FileBlock* block) {
   size_t offset = block->offset() + view_size_;
+  TRACE_EVENT2(
+      "disk_cache", "MappedFile::LoadKY", "block_size", block->size(), "offset",
+      std::to_string(offset) + ", view_size: " + std::to_string(view_size_));
   return Read(block->buffer(), block->size(), offset);
 }
 

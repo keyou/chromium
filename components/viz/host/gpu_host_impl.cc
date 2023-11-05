@@ -4,6 +4,7 @@
 
 #include "components/viz/host/gpu_host_impl.h"
 
+#include <string>
 #include <utility>
 
 #include "base/bind.h"
@@ -27,6 +28,9 @@
 #include "gpu/ipc/host/gpu_disk_cache.h"
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 #include "ui/gfx/font_render_params.h"
+
+#include <iomanip>
+#include <sstream>
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/build_info.h"
@@ -420,6 +424,28 @@ std::string GpuHostImpl::GetShaderPrefixKey() {
   return shader_prefix_key_;
 }
 
+std::string char2str(const char* ptr, int length) {
+  std::ostringstream oss;
+
+  for (int i = 0; i < length; i++) {
+    if (std::isprint(ptr[i])) {
+      oss << ptr[i];
+    } else if (ptr[i] == 0x0a) {
+      oss << std::endl;
+    } else {
+      oss << std::hex << std::setw(2) << std::setfill('0')
+          << static_cast<int>(ptr[i]);
+    }
+  }
+
+  return oss.str();
+}
+
+std::string str2str(const std::string& data) {
+  return std::to_string(data.length()) + " : " +
+         char2str(data.c_str(), data.length());
+}
+
 void GpuHostImpl::LoadedBlob(const gpu::GpuDiskCacheHandle& handle,
                              const std::string& key,
                              const std::string& data) {
@@ -432,6 +458,10 @@ void GpuHostImpl::LoadedBlob(const gpu::GpuDiskCacheHandle& handle,
       std::string prefix = GetShaderPrefixKey();
       bool prefix_ok = !key.compare(0, prefix.length(), prefix);
       UMA_HISTOGRAM_BOOLEAN("GPU.ShaderLoadPrefixOK", prefix_ok);
+      TRACE_EVENT2("gpu", "LoadedBlobKY", "key", key, "data", str2str(data));
+      LOG(ERROR) << "keyou: LoadedBlob: key: " << key << std::endl
+                 << ", data: " << str2str(data);
+
       if (prefix_ok) {
         // Remove the prefix from the key before load.
         std::string key_no_prefix = key.substr(prefix.length() + 1);
@@ -641,7 +671,7 @@ void GpuHostImpl::StoreBlobToDisk(const gpu::GpuDiskCacheHandle& handle,
   switch (GetHandleType(handle)) {
     case gpu::GpuDiskCacheType::kGlShaders: {
       std::string prefix = GetShaderPrefixKey();
-      cache->Cache(base::StrCat({prefix, ":", key}), blob);
+      // cache->Cache(base::StrCat({prefix, ":", key}), blob);
       break;
     }
     case gpu::GpuDiskCacheType::kDawnWebGPU: {

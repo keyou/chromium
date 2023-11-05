@@ -10,10 +10,12 @@
 
 #include <stdio.h>
 
+#include <iomanip>
 #include <memory>
 #include <set>
 #include <string>
 
+#include "base/check.h"
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/files/file_enumerator.h"
@@ -24,8 +26,10 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_executor.h"
 #include "base/time/time.h"
+#include "net/disk_cache/blockfile/addr.h"
 #include "net/disk_cache/blockfile/block_files.h"
 #include "net/disk_cache/blockfile/disk_format.h"
+#include "net/disk_cache/blockfile/disk_format_base.h"
 #include "net/disk_cache/blockfile/mapped_file.h"
 #include "net/disk_cache/blockfile/stats.h"
 #include "net/disk_cache/blockfile/storage_block-inl.h"
@@ -35,6 +39,23 @@
 namespace {
 
 const base::FilePath::CharType kIndexName[] = FILE_PATH_LITERAL("index");
+
+std::string CacheAddrToString(disk_cache::CacheAddr cache_addr) {
+  if (!cache_addr) {
+    return std::string();
+  }
+  disk_cache::Addr address(cache_addr);
+  std::ostringstream ss;
+  ss << "FileNumber: " << address.FileNumber()
+     << ", file_type: " << address.file_type()
+     << ", BlockSize: " << address.BlockSize()
+     << ", start_block: " << address.start_block()
+     << ", num_blocks: " << address.num_blocks() << ", offset: 0x" << std::hex
+     << std::setw(8) << std::setfill('0')
+     << address.BlockSize() * address.start_block() +
+            disk_cache::kBlockHeaderSize;
+  return ss.str();
+}
 
 // Reads the |header_size| bytes from the beginning of file |name|.
 bool ReadHeader(const base::FilePath& name, char* header, int header_size) {
@@ -52,10 +73,19 @@ bool ReadHeader(const base::FilePath& name, char* header, int header_size) {
   return true;
 }
 
-int GetMajorVersionFromFile(const base::FilePath& name) {
+int GetMajorVersionFromIndexFile(const base::FilePath& name) {
   disk_cache::IndexHeader header;
   if (!ReadHeader(name, reinterpret_cast<char*>(&header), sizeof(header)))
     return 0;
+
+  return header.version >> 16;
+}
+
+int GetMajorVersionFromDataFile(const base::FilePath& name) {
+  disk_cache::BlockFileHeader header;
+  if (!ReadHeader(name, reinterpret_cast<char*>(&header), sizeof(header))) {
+    return 0;
+  }
 
   return header.version >> 16;
 }
@@ -301,7 +331,8 @@ bool CacheDumper::HexDump(disk_cache::CacheAddr addr, std::string* out) {
   if (!file->Read(buffer.get(), size, offset))
     return false;
 
-  base::StringAppendF(out, "0x%x:\n", addr);
+  base::StringAppendF(out, "0x%x (%s):\n", addr,
+                      CacheAddrToString(addr).c_str());
   net::ViewCacheHelper::HexDump(buffer.get(), size, out);
   return true;
 }
@@ -328,7 +359,7 @@ void DumpEntry(disk_cache::CacheAddr addr,
       key.resize(90);
   }
 
-  printf("Entry at 0x%x\n", addr);
+  printf("Entry at 0x%x (%s)\n", addr, CacheAddrToString(addr).c_str());
   printf("rankings: 0x%x\n", entry.rankings_node);
   printf("key length: %d\n", entry.key_len);
   printf("key: \"%s\"\n", key.c_str());
@@ -336,14 +367,16 @@ void DumpEntry(disk_cache::CacheAddr addr,
   if (verbose) {
     printf("key addr: 0x%x\n", entry.long_key);
     printf("hash: 0x%x\n", entry.hash);
-    printf("next entry: 0x%x\n", entry.next);
+    printf("next entry: 0x%x (%s)\n", entry.next,
+           CacheAddrToString(entry.next).c_str());
     printf("reuse count: %d\n", entry.reuse_count);
     printf("refetch count: %d\n", entry.refetch_count);
     printf("state: %d\n", entry.state);
     printf("creation: %s\n", ToLocalTime(entry.creation_time).c_str());
     for (int i = 0; i < 4; i++) {
       printf("data size %d: %d\n", i, entry.data_size[i]);
-      printf("data addr %d: 0x%x\n", i, entry.data_addr[i]);
+      printf("data addr %d: 0x%x (%s)\n", i, entry.data_addr[i],
+             CacheAddrToString(entry.data_addr[i]).c_str());
     }
     printf("----------\n\n");
   }
@@ -352,15 +385,18 @@ void DumpEntry(disk_cache::CacheAddr addr,
 void DumpRankings(disk_cache::CacheAddr addr,
                   const disk_cache::RankingsNode& rankings,
                   bool verbose) {
-  printf("Rankings at 0x%x\n", addr);
-  printf("next: 0x%x\n", rankings.next);
-  printf("prev: 0x%x\n", rankings.prev);
-  printf("entry: 0x%x\n", rankings.contents);
+  printf("Rankings at 0x%x (%s)\n", addr, CacheAddrToString(addr).c_str());
+  printf("next: 0x%x (%s)\n", rankings.next,
+         CacheAddrToString(rankings.next).c_str());
+  printf("prev: 0x%x (%s)\n", rankings.prev,
+         CacheAddrToString(rankings.prev).c_str());
+  printf("entry: 0x%x (%s)\n", rankings.contents,
+         CacheAddrToString(rankings.contents).c_str());
 
   if (verbose) {
     printf("dirty: %d\n", rankings.dirty);
-    if (rankings.last_used != rankings.last_modified)
-      printf("used: %s\n", ToLocalTime(rankings.last_used).c_str());
+    // if (rankings.last_used != rankings.last_modified)
+    printf("used: %s\n", ToLocalTime(rankings.last_used).c_str());
     printf("modified: %s\n", ToLocalTime(rankings.last_modified).c_str());
     printf("hash: 0x%x\n", rankings.self_hash);
     printf("----------\n\n");
@@ -399,27 +435,22 @@ bool CanDump(disk_cache::CacheAddr addr) {
 int GetMajorVersion(const base::FilePath& input_path) {
   base::FilePath index_name(input_path.Append(kIndexName));
 
-  int version = GetMajorVersionFromFile(index_name);
-  if (!version)
+  int index_version = GetMajorVersionFromIndexFile(index_name);
+  if (!index_version) {
     return 0;
+  }
 
-  base::FilePath data_name(input_path.Append(FILE_PATH_LITERAL("data_0")));
-  if (version != GetMajorVersionFromFile(data_name))
-    return 0;
-
-  data_name = input_path.Append(FILE_PATH_LITERAL("data_1"));
-  if (version != GetMajorVersionFromFile(data_name))
-    return 0;
-
-  data_name = input_path.Append(FILE_PATH_LITERAL("data_2"));
-  if (version != GetMajorVersionFromFile(data_name))
-    return 0;
-
-  data_name = input_path.Append(FILE_PATH_LITERAL("data_3"));
-  if (version != GetMajorVersionFromFile(data_name))
-    return 0;
-
-  return version;
+  const int kCurentBlockVersion = disk_cache::kBlockVersion2 >> 16;
+  int data_version = kCurentBlockVersion;
+  for (int i = 0; i < disk_cache::kFirstAdditionalBlockFile; i++) {
+    base::FilePath data_name(
+        input_path.Append(FILE_PATH_LITERAL(base::StringPrintf("data_%d", i))));
+    data_version = GetMajorVersionFromDataFile(data_name);
+    if (!data_version || data_version != kCurentBlockVersion) {
+      return 0;
+    }
+  }
+  return index_version;
 }
 
 // Dumps the headers of all files.

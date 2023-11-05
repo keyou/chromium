@@ -14,6 +14,7 @@
 #include "base/run_loop.h"
 #include "base/task/thread_pool.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
+#include "base/trace_event/trace_event.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/disk_cache.h"
 
@@ -42,6 +43,8 @@ bool File::Read(void* buffer, size_t buffer_len, size_t offset) {
       offset > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
     return false;
   }
+  TRACE_EVENT2("disk_cache", "File::ReadKY", "buffer_len", buffer_len, "offset",
+               offset);
 
   int ret = base_file_.Read(offset, static_cast<char*>(buffer), buffer_len);
   return (static_cast<size_t>(ret) == buffer_len);

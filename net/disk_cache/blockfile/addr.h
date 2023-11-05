@@ -167,6 +167,8 @@ class NET_EXPORT_PRIVATE Addr {
   bool SanityCheckForEntry() const;
   bool SanityCheckForRankings() const;
 
+  std::string ToString() const;
+
  private:
   uint32_t reserved_bits() const { return value_ & kReservedBitsMask; }
 

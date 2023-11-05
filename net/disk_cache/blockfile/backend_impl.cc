@@ -4,8 +4,12 @@
 
 #include "net/disk_cache/blockfile/backend_impl.h"
 
+#include <cstdint>
+#include <iomanip>
 #include <limits>
 #include <memory>
+#include <sstream>
+#include <string>
 #include <utility>
 
 #include "base/bind.h"
@@ -473,7 +477,8 @@ int BackendImpl::SyncDoomEntriesSince(const base::Time initial_time) {
 
 int BackendImpl::SyncOpenNextEntry(Rankings::Iterator* iterator,
                                    scoped_refptr<EntryImpl>* next_entry) {
-  TRACE_EVENT0("disk_cache", "BackendImpl::SyncOpenNextEntry");
+  TRACE_EVENT1("disk_cache", "BackendImpl::SyncOpenNextEntry", "list",
+               static_cast<int>(iterator->list));
 
   *next_entry = OpenNextEntryImpl(iterator);
   return (*next_entry) ? net::OK : net::ERR_FAILED;
@@ -497,7 +502,7 @@ void BackendImpl::SyncOnExternalCacheHit(const std::string& key) {
 }
 
 scoped_refptr<EntryImpl> BackendImpl::OpenEntryImpl(const std::string& key) {
-  TRACE_EVENT0("disk_cache", "BackendImpl::OpenEntryImpl");
+  TRACE_EVENT1("disk_cache", "BackendImpl::OpenEntryImpl", "key", key);
 
   if (disabled_)
     return nullptr;
@@ -636,7 +641,9 @@ scoped_refptr<EntryImpl> BackendImpl::OpenNextEntryImpl(
     Rankings::Iterator* iterator) {
   if (disabled_)
     return nullptr;
-
+  TRACE_EVENT2("disk_cache", "BackendImpl::OpenNextEntryImplKY", "my_rankings",
+               static_cast<void*>(iterator->my_rankings.get()), "list",
+               (int)iterator->list);
   const int kListsToSearch = 3;
   scoped_refptr<EntryImpl> entries[kListsToSearch];
   if (!iterator->my_rankings) {
@@ -719,9 +726,11 @@ base::FilePath BackendImpl::GetFileName(Addr address) const {
     NOTREACHED();
     return base::FilePath();
   }
-
   std::string tmp = base::StringPrintf("f_%06x", address.FileNumber());
-  return path_.AppendASCII(tmp);
+  auto result = path_.AppendASCII(tmp);
+  TRACE_EVENT2("disk_cache", "BackendImpl::GetFileNameKY", "address",
+               address.ToString(), "file", result.value());
+  return result;
 }
 
 MappedFile* BackendImpl::File(Addr address) {
@@ -1569,6 +1578,8 @@ void BackendImpl::PrepareForRestart() {
 }
 
 int BackendImpl::NewEntry(Addr address, scoped_refptr<EntryImpl>* entry) {
+  TRACE_EVENT2("disk_cache", "BackendImpl::NewEntryKY", "address",
+               address.ToString(), "read_only", read_only_);
   auto it = open_entries_.find(address.value());
   if (it != open_entries_.end()) {
     // Easy job. This entry is already in memory.
@@ -1585,6 +1596,7 @@ int BackendImpl::NewEntry(Addr address, scoped_refptr<EntryImpl>* entry) {
   }
 
   auto cache_entry = base::MakeRefCounted<EntryImpl>(this, address, read_only_);
+  LOG(ERROR) << "keyou: new EntryImpl: " << cache_entry.get();
   IncreaseNumRefs();
   *entry = nullptr;
 
@@ -1664,6 +1676,10 @@ scoped_refptr<EntryImpl> BackendImpl::MatchEntry(const std::string& key,
     }
 
     int error = NewEntry(address, &cache_entry);
+    TRACE_EVENT2("disk_cache", "NewEntryKY", "entry_size",
+                 std::to_string(cache_entry->GetDataSize(1)) + ", " +
+                     std::to_string(cache_entry->GetDataSize(0)),
+                 "error", error);
     if (error || cache_entry->dirty()) {
       // This entry is dirty on disk (it was not properly closed): we cannot
       // trust it.
@@ -1725,6 +1741,13 @@ scoped_refptr<EntryImpl> BackendImpl::MatchEntry(const std::string& key,
 
   FlushIndex();
 
+  if (!find_parent) {
+    TRACE_EVENT2("disk_cache", "entry-resultKY", "entry_size",
+                 std::to_string(cache_entry->GetDataSize(1)) + ", " +
+                     std::to_string(cache_entry->GetDataSize(0)),
+                 "null", 0);
+  }
+
   return find_parent ? std::move(parent_entry) : std::move(cache_entry);
 }
 
@@ -1737,6 +1760,9 @@ bool BackendImpl::OpenFollowingEntryFromList(
 
   if (!new_eviction_ && Rankings::NO_USE != list)
     return false;
+
+  TRACE_EVENT1("disk_cache", "BackendImpl::OpenFollowingEntryFromListKY",
+               "list", static_cast<int>(list));
 
   Rankings::ScopedRankingsBlock rankings(&rankings_, *from_entry);
   CacheRankingsBlock* next_block = rankings_.GetNext(rankings.get(), list);
@@ -1751,12 +1777,23 @@ bool BackendImpl::OpenFollowingEntryFromList(
   return true;
 }
 
+template <typename T>
+std::string int2hex(T i) {
+  std::stringstream stream;
+  stream << "0x" << std::setfill('0') << std::setw(sizeof(T) * 2) << std::hex
+         << i;
+  return stream.str();
+}
+
 scoped_refptr<EntryImpl> BackendImpl::GetEnumeratedEntry(
     CacheRankingsBlock* next,
     Rankings::List list) {
   if (!next || disabled_)
     return nullptr;
 
+  TRACE_EVENT2("disk_cache", "BackendImpl::GetEnumeratedEntryKY",
+               "contents-addr", Addr(next->Data()->contents).ToString(), "addr",
+               next->address().ToString());
   scoped_refptr<EntryImpl> entry;
   int rv = NewEntry(Addr(next->Data()->contents), &entry);
   if (rv) {
@@ -1789,7 +1826,8 @@ scoped_refptr<EntryImpl> BackendImpl::GetEnumeratedEntry(
   // will disasappear because this scenario is just a bug.
 
   // Make sure that we save the key for later.
-  entry->GetKey();
+  auto key = entry->GetKey();
+  TRACE_EVENT1("disk_cache", "entryKeyKY", "key", key);
 
   return entry;
 }

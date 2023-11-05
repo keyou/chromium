@@ -6,6 +6,10 @@
 
 #include "base/check.h"
 
+#include <algorithm>
+#include <iomanip>
+#include <sstream>
+
 namespace disk_cache {
 
 int Addr::start_block() const {
@@ -57,6 +61,21 @@ bool Addr::SanityCheckForRankings() const {
     return false;
 
   return true;
+}
+
+std::string Addr::ToString() const {
+  if (value_ == 0) {
+    return "null";
+  }
+  auto address = *this;
+  std::ostringstream ss;
+  ss << "  value: 0x" << std::hex << address.value() << std::dec
+     << ", FileNumber: " << address.FileNumber()
+     << ", file_type: " << address.file_type()
+     << ", BlockSize: " << address.BlockSize()
+     << ", start_block: " << address.start_block()
+     << ", num_blocks: " << address.num_blocks();
+  return ss.str();
 }
 
 }  // namespace disk_cache

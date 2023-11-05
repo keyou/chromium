@@ -84,8 +84,9 @@ int main(int argc, const char* argv[]) {
     return Help();
 
   int version = GetMajorVersion(input_path);
-  if (version != 2)
+  if (version != 3) {
     return FILE_ACCESS_ERROR;
+  }
 
   if (command_line.HasSwitch(kDumpContents))
     return DumpContents(input_path);
