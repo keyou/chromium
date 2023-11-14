@@ -410,6 +410,8 @@ LayoutObject* LayoutObject::CreateObject(Element* element,
     case EDisplay::kLayoutCustom:
     case EDisplay::kInlineLayoutCustom:
       return LayoutObjectFactory::CreateCustom(*element, style, legacy);
+    case EDisplay::kKeyouDynamicBlock:
+      return LayoutObjectFactory::CreateBlockFlow(*element, style, legacy);
   }
 
   NOTREACHED();

@@ -206,6 +206,7 @@ static EDisplay EquivalentBlockDisplay(EDisplay display) {
     case EDisplay::kTableColumn:
     case EDisplay::kTableCell:
     case EDisplay::kTableCaption:
+    case EDisplay::kKeyouDynamicBlock:
       return EDisplay::kBlock;
     case EDisplay::kNone:
       NOTREACHED();
