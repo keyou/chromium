@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/layout/deferred_shaping.h"
@@ -41,6 +42,8 @@
 #include "third_party/blink/renderer/core/mathml/mathml_element.h"
 #include "third_party/blink/renderer/core/mathml_names.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/platform/geometry/layout_unit.h"
+#include "third_party/blink/renderer/platform/geometry/length.h"
 
 namespace blink {
 namespace {
@@ -111,6 +114,9 @@ inline const NGLayoutResult* LayoutBlockChild(
   if (UNLIKELY(early_break))
     early_break_in_child = EnterEarlyBreakInChild(*node, *early_break);
   column_spanner_path = FollowColumnSpannerPath(column_spanner_path, *node);
+  if (node->Style().Height() == Length(30, Length::kFixed)) {
+    LOG(ERROR) << "keyou: hit2";
+  }
   return node->Layout(space, To<NGBlockBreakToken>(break_token),
                       early_break_in_child, column_spanner_path);
 }
@@ -261,6 +267,8 @@ NGBlockLayoutAlgorithm::NGBlockLayoutAlgorithm(
           NGUnpositionedListMarker(marker_node));
     }
   }
+  LOG(ERROR) << "keyou1: ctor: ChildAvailableSize: " << ChildAvailableSize()
+             << ", ConstraintSpace: " << ConstraintSpace();
 }
 
 // Define the destructor here, so that we can forward-declare more in the
@@ -453,6 +461,15 @@ LogicalOffset NGBlockLayoutAlgorithm::CalculateLogicalOffset(
 }
 
 const NGLayoutResult* NGBlockLayoutAlgorithm::Layout() {
+  auto node = Node().ToString();
+  LOG(ERROR) << "keyou1: node: " << node.Utf8();
+  auto* dom_node = Node().GetDOMNode();
+  DCHECK(dom_node);
+  auto node_str = Node().GetDOMNode()->ToTreeStringForThis().Utf8();
+  auto* c_str = node_str.c_str();
+  LOG(ERROR) << "keyou1: layout node: " << c_str;
+  LOG(ERROR) << "keyou1: ChildAvailableSize: " << ChildAvailableSize()
+             << ", ConstraintSpace: " << ConstraintSpace();
   const NGLayoutResult* result = nullptr;
   // Inline children require an inline child layout context to be
   // passed between siblings. We want to stack-allocate that one, but
@@ -462,6 +479,12 @@ const NGLayoutResult* NGBlockLayoutAlgorithm::Layout() {
     result = LayoutWithInlineChildLayoutContext(first_child);
   else
     result = Layout(nullptr);
+  const auto& physical_fragment = result->PhysicalFragment();
+  LOG(ERROR) << "keyou1: result: " << Node().GetDOMNode()->ToString()
+             << ", \nphysical_fragment: " << physical_fragment.ToString()
+             << ", intrinsic_block_size_: "
+             << result->IntrinsicBlockSize().ToString() << ", BfcBlockOffset: "
+             << result->BfcBlockOffset().value_or(LayoutUnit()).ToString();
   switch (result->Status()) {
     case NGLayoutResult::kNeedsEarlierBreak:
       // If we found a good break somewhere inside this block, re-layout and
@@ -2181,6 +2204,9 @@ NGInflowChildData NGBlockLayoutAlgorithm::ComputeChildData(
           BorderScrollbarPadding().LineLeft(ConstraintSpace().Direction()) +
           margins.LineLeft(ConstraintSpace().Direction()),
       BfcBlockOffset() + logical_block_offset};
+  LOG(ERROR) << "keyou1: child_bfc_offset: " << child_bfc_offset
+             << "BfcBlockOffset: " << BfcBlockOffset()
+             << ", logical_block_offset: " << logical_block_offset;
 
   return {child_bfc_offset, margin_strut, margins, margins_fully_resolved,
           IsBreakInside(child_block_break_token)};

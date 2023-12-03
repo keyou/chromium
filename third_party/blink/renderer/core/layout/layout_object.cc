@@ -411,6 +411,7 @@ LayoutObject* LayoutObject::CreateObject(Element* element,
     case EDisplay::kInlineLayoutCustom:
       return LayoutObjectFactory::CreateCustom(*element, style, legacy);
     case EDisplay::kKeyouDynamicBlock:
+      // TODO: 创建一个针对 Scroller 的 LayoutObject
       return LayoutObjectFactory::CreateBlockFlow(*element, style, legacy);
   }
 

@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/strings/string_util.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
@@ -65,6 +66,7 @@
 #include "third_party/blink/renderer/core/layout/ng/ng_replaced_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_simplified_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_space_utils.h"
+#include "third_party/blink/renderer/core/layout/ng/scroller/scroller_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/ng/table/layout_ng_table_cell.h"
 #include "third_party/blink/renderer/core/layout/ng/table/ng_table_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/ng/table/ng_table_row_layout_algorithm.h"
@@ -167,6 +169,9 @@ NOINLINE void DetermineAlgorithmAndRun(const NGLayoutAlgorithmParams& params,
                                        const Callback& callback) {
   const ComputedStyle& style = params.node.Style();
   const LayoutBox& box = *params.node.GetLayoutBox();
+  LOG(ERROR) << "keyou: DetermineAlgorithmAndRun: "
+             << params.node.ToString().Utf8()
+             << ", node: " << params.node.GetDOMNode()->nodeName();
   if (box.IsLayoutNGFlexibleBox()) {
     CreateAlgorithmAndRun<NGFlexLayoutAlgorithm>(params, callback);
   } else if (box.IsTable()) {
@@ -197,13 +202,20 @@ NOINLINE void DetermineAlgorithmAndRun(const NGLayoutAlgorithmParams& params,
   } else if (UNLIKELY(!box.Parent() && params.node.IsPaginatedRoot())) {
     DCHECK(RuntimeEnabledFeatures::LayoutNGPrintingEnabled());
     CreateAlgorithmAndRun<NGPageLayoutAlgorithm>(params, callback);
+  } else if (params.node.GetDOMNode()->nodeName().Contains(
+                 html_names::kScrollerTag.ToString().UpperASCII())) {
+    LOG(ERROR) << "keyou: ScrollerLayoutAlgorithm";
+    CreateAlgorithmAndRun<ScrollerLayoutAlgorithm>(params, callback);
   } else {
+    LOG(ERROR) << "keyou: NGBlockLayoutAlgorithm";
     CreateAlgorithmAndRun<NGBlockLayoutAlgorithm>(params, callback);
   }
 }
 
 inline const NGLayoutResult* LayoutWithAlgorithm(
     const NGLayoutAlgorithmParams& params) {
+  LOG(ERROR) << "keyou: border_box_size3: "
+             << params.fragment_geometry.border_box_size;
   const NGLayoutResult* result = nullptr;
   DetermineAlgorithmAndRun(params,
                            [&result](NGLayoutAlgorithmOperations* algorithm) {
@@ -412,6 +424,7 @@ const NGLayoutResult* NGBlockNode::Layout(
   if (!CanUseNewLayout())
     return RunLegacyLayout(constraint_space);
 
+  LOG(ERROR) << "keyou: child constraint_space: " << constraint_space;
   // The exclusion space internally is a pointer to a shared vector, and
   // equality of exclusion spaces is performed using pointer comparison on this
   // internal shared vector.
@@ -483,6 +496,8 @@ const NGLayoutResult* NGBlockNode::Layout(
   if (!fragment_geometry) {
     fragment_geometry =
         CalculateInitialFragmentGeometry(constraint_space, *this, break_token);
+    LOG(ERROR) << "keyou: border_box_size2: "
+               << fragment_geometry->border_box_size;
   }
 
   if (
@@ -1997,7 +2012,8 @@ const NGLayoutResult* NGBlockNode::RunLegacyLayout(
     fragment_geometry.scrollbar = ComputeScrollbars(constraint_space, *this);
     fragment_geometry.padding = {box_->PaddingStart(), box_->PaddingEnd(),
                                  box_->PaddingBefore(), box_->PaddingAfter()};
-
+    LOG(ERROR) << "keyou: fragment_geometry.border_box_size: "
+               << fragment_geometry.border_box_size;
     // TODO(kojii): Implement use_first_line_style.
     NGBoxFragmentBuilder builder(*this, box_->Style(), constraint_space,
                                  {writing_mode, box_->StyleRef().Direction()});

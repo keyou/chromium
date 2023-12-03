@@ -7,6 +7,8 @@
 
 #include "base/notreached.h"
 #include "third_party/blink/renderer/core/css/css_value_id_mappings_generated.h"
+#include "third_party/blink/renderer/core/css_value_keywords.h"
+#include "third_party/blink/renderer/core/style/computed_style_base_constants.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 
 namespace blink {
@@ -172,6 +174,9 @@ inline EDisplay CssValueIDToPlatformEnum(CSSValueID v) {
     return EDisplay::kInlineFlex;
   if (v == CSSValueID::kMath)
     return EDisplay::kMath;
+  if (v == CSSValueID::kKeyouDynamicBlock) {
+    return EDisplay::kKeyouDynamicBlock;
+  }
 
   NOTREACHED();
   return EDisplay::kInline;

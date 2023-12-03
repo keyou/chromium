@@ -246,6 +246,8 @@ void LayoutNGMixin<Base>::UpdateOutOfFlowBlockLayout() {
   } else {
     container_border_box_logical_height = container->LogicalHeight();
   }
+  LOG(ERROR) << "keyou: container_border_box_logical_height: "
+             << container_border_box_logical_height;
 
   fragment_geometry.border_box_size = {container_border_box_logical_width,
                                        container_border_box_logical_height};

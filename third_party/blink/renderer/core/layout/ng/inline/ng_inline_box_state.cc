@@ -828,7 +828,8 @@ const NGLayoutResult* NGInlineLayoutStateStack::BoxData::CreateBoxFragment(
       NGBoxStrut(borders, IsFlippedLinesWritingMode(style.GetWritingMode()));
   fragment_geometry.padding =
       NGBoxStrut(padding, IsFlippedLinesWritingMode(style.GetWritingMode()));
-
+  LOG(ERROR) << "keyou: border_box_size2: "
+             << fragment_geometry.border_box_size;
   // Because children are already in the visual order, use LTR for the
   // fragment builder so that it should not transform the coordinates for RTL.
   NGBoxFragmentBuilder box(item->GetLayoutObject(), &style, space,

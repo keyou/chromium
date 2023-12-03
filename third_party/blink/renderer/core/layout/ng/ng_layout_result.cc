@@ -285,6 +285,7 @@ NGLayoutResult::NGLayoutResult(const NGPhysicalFragment* physical_fragment,
     bfc_offset_.line_offset = builder->bfc_line_offset_;
     bfc_offset_.block_offset =
         builder->bfc_block_offset_.value_or(LayoutUnit());
+    LOG(ERROR) << "keyou: block_offset1: " << bfc_offset_.block_offset;
     bitfields_.is_bfc_block_offset_nullopt =
         !builder->bfc_block_offset_.has_value();
   }

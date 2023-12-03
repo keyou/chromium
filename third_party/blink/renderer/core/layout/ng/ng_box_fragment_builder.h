@@ -69,7 +69,7 @@ class CORE_EXPORT NGBoxFragmentBuilder final
     initial_fragment_geometry_ = &initial_fragment_geometry;
     size_ = initial_fragment_geometry_->border_box_size;
     is_initial_block_size_indefinite_ = size_.block_size == kIndefiniteSize;
-
+    LOG(ERROR) << "keyou: border_box_size: " << size_;
     border_padding_ =
         initial_fragment_geometry.border + initial_fragment_geometry.padding;
     border_scrollbar_padding_ =

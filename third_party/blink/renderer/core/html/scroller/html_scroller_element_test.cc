@@ -17,6 +17,7 @@
 #include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/html/html_object_element.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/core/style/computed_style_base_constants.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -113,13 +114,14 @@ TEST_F(HTMLScrollerElementTest, scroller_style) {
   // This can be seen on sites with Flash cookies,
   // for example on www.yandex.ru
   SetHtmlInnerHTML(R"HTML(
-    <scroller id="scrollerId" style="-keyou-layout: -keyou-layout2; app-region: drag;"></scroller>
+    <scroller id="scrollerId" style="display: -keyou-dynamic-block;-keyou-layout: -keyou-layout2; app-region: drag;"></scroller>
   )HTML");
 
   auto* scroller_element = GetElementById("scrollerId");
   ASSERT_TRUE(scroller_element);
   auto* scroller = To<HTMLScrollerElement>(scroller_element);
   auto* computed_style = scroller->GetComputedStyle();
+  EXPECT_EQ(computed_style->Display(), EDisplay::kKeyouDynamicBlock);
   EXPECT_EQ(computed_style->KeyouLayout(), EKeyouLayout::kKeyouLayout2);
   EXPECT_EQ(computed_style->DraggableRegionMode(), EDraggableRegionMode::kDrag);
 }

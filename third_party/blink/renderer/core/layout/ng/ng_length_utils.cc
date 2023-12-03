@@ -528,6 +528,9 @@ LayoutUnit ComputeInlineSizeForFragmentInternal(
   const bool has_aspect_ratio = !style.AspectRatio().IsAuto();
   Length logical_width = style.LogicalWidth();
   Length min_length = style.LogicalMinWidth();
+  if (style.Height() == Length(20, Length::Type::kFixed)) {
+    LOG(ERROR) << "keyou: hit";
+  }
 
   LayoutUnit extent = kIndefiniteSize;
   if (has_aspect_ratio) {
@@ -1551,11 +1554,13 @@ NGFragmentGeometry CalculateInitialFragmentGeometry(
       ClampScrollbarToContentBox(&scrollbar,
                                  *inline_size - border_padding.InlineSum());
     }
+    LOG(ERROR) << "keyou: inline_size1: " << *inline_size
+               << ", constraint_space: " << constraint_space
+               << ", border_padding: " << border_padding;
   }
 
   LayoutUnit block_size = ComputeInitialBlockSizeForFragment(
       constraint_space, style, border_padding, default_block_size, inline_size);
-
   return {LogicalSize(inline_size.value_or(kIndefiniteSize), block_size),
           border, scrollbar, padding};
 }
