@@ -92,7 +92,7 @@ TEST_F(ScrollerLayoutAlgorithmTest, FixedSize) {
 }
 
 // Verifies that two children are laid out with the correct size and position.
-TEST_F(ScrollerLayoutAlgorithmTest, LayoutChildren) {
+TEST_F(ScrollerLayoutAlgorithmTest, ScrollerLayout) {
   // SetBodyInnerHTML(R"HTML(
   //   <div style="display: flex; flex-direction: column; width: 50px">
   //     <svg width="29" height="22" style="width: auto; height: auto;
@@ -101,10 +101,10 @@ TEST_F(ScrollerLayoutAlgorithmTest, LayoutChildren) {
   // )HTML");
 
   SetBodyInnerHTML(R"HTML(
-    <scroller id="container" style="width: 30px">
-      <div style="height: 20px">
+    <scroller id="container" style="display: -keyou-dynamic-block;width: 30px">
+      <div style="-keyou-layout: -keyou-layout1;height: 20px; position: absolute; left: 100px;">
       </div>
-      <div style="height: 30px; margin-top: 5px; margin-bottom: 20px">
+      <div style="-keyou-layout: -keyou-layout2;height: 30px; margin-top: 5px; margin-bottom: 20px">
       </div>
     </scroller>
   )HTML");
@@ -149,7 +149,7 @@ TEST_F(ScrollerLayoutAlgorithmTest, LayoutChildren) {
   EXPECT_EQ(kHeight1 + kMarginTop, second_child.Offset().top);
 }
 
-TEST_F(ScrollerLayoutAlgorithmTest, LayoutChildren1) {
+TEST_F(ScrollerLayoutAlgorithmTest, BlockLayout) {
   // SetBodyInnerHTML(R"HTML(
   //   <div style="display: flex; flex-direction: column; width: 50px">
   //     <svg width="29" height="22" style="width: auto; height: auto;

@@ -906,6 +906,14 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
     NOT_DESTROYED();
     return IsOfType(kLayoutObjectNGListItem);
   }
+  bool IsLayoutNGScroller() const {
+    NOT_DESTROYED();
+    return IsOfType(kLayoutObjectNGScroller);
+  }
+  bool IsLayoutNGScrollerItem() const {
+    NOT_DESTROYED();
+    return IsOfType(kLayoutObjectNGScrollerItem);
+  }
   bool IsLayoutNGInsideListMarker() const {
     NOT_DESTROYED();
     return IsOfType(kLayoutObjectNGInsideListMarker);
@@ -3758,6 +3766,8 @@ class CORE_EXPORT LayoutObject : public GarbageCollected<LayoutObject>,
     kLayoutObjectNGGrid,
     kLayoutObjectNGInsideListMarker,
     kLayoutObjectNGListItem,
+    kLayoutObjectNGScroller,
+    kLayoutObjectNGScrollerItem,
     kLayoutObjectNGOutsideListMarker,
     kLayoutObjectNGProgress,
     kLayoutObjectNGText,

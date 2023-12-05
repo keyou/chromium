@@ -59,6 +59,8 @@
 #include "third_party/blink/renderer/core/layout/ng/list/layout_ng_outside_list_marker.h"
 #include "third_party/blink/renderer/core/layout/ng/mathml/layout_ng_mathml_block.h"
 #include "third_party/blink/renderer/core/layout/ng/mathml/layout_ng_mathml_block_flow.h"
+#include "third_party/blink/renderer/core/layout/ng/scroller/layout_ng_scroller.h"
+#include "third_party/blink/renderer/core/layout/ng/scroller/layout_ng_scroller_item.h"
 #include "third_party/blink/renderer/core/layout/ng/svg/layout_ng_svg_foreign_object.h"
 #include "third_party/blink/renderer/core/layout/ng/svg/layout_ng_svg_text.h"
 #include "third_party/blink/renderer/core/layout/ng/table/layout_ng_table.h"
@@ -72,6 +74,7 @@
 #include "third_party/blink/renderer/core/mathml/mathml_element.h"
 #include "third_party/blink/renderer/core/mathml/mathml_token_element.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/core/style/computed_style_base_constants.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
@@ -126,6 +129,17 @@ LayoutBlockFlow* LayoutObjectFactory::CreateBlockFlow(
     // needs to traverse the tree.
     return CreateObject<LayoutBlockFlow, LayoutNGListItem, LayoutListItem>(
         node, legacy);
+  }
+
+  if (style.Display() == EDisplay::kKeyouDynamicBlock) {
+    return CreateObject<LayoutBlockFlow, LayoutNGScroller>(node, legacy);
+  }
+
+  auto* parent_style = node.parentNode()->GetComputedStyle();
+  if (style.KeyouLayout() != EKeyouLayout::kNone ||
+      (parent_style &&
+       parent_style->Display() == EDisplay::kKeyouDynamicBlock)) {
+    return CreateObject<LayoutBlockFlow, LayoutNGScrollerItem>(node, legacy);
   }
 
   // Create a plain LayoutBlockFlow

@@ -386,11 +386,12 @@ const NGLayoutResult* ScrollerLayoutAlgorithm::Layout() {
     const NGBreakToken* child_break_token = entry.token;
 
     NGBlockNode block_child = To<NGBlockNode>(child);
-    if (child.IsOutOfFlowPositioned()) {
-      container_builder_.AddOutOfFlowChildCandidate(
-          block_child, BorderScrollbarPadding().StartOffset());
-      continue;
-    }
+    // if (child.IsOutOfFlowPositioned()) {
+    //   container_builder_.AddOutOfFlowChildCandidate(
+    //       block_child, BorderScrollbarPadding().StartOffset());
+    //   continue;
+    // }
+    DCHECK(!child.IsOutOfFlowPositioned());
 
     NGLayoutResult::EStatus status;
     status =
@@ -777,31 +778,6 @@ NGLayoutResult::EStatus ScrollerLayoutAlgorithm::HandleInflow(
 
   absl::optional<LayoutUnit> forced_bfc_block_offset;
   bool is_pushed_by_floats = false;
-
-  // If we can separate the previous margin strut from what is to follow, do
-  // that. Then we're able to resolve *our* BFC block offset and position any
-  // pending floats. There are two situations where this is necessary:
-  //  1. If the child is to be cleared by adjoining floats.
-  //  2. If the child is a non-empty inline.
-  //
-  // Note this logic is copied to TryReuseFragmentsFromCache(), they need to
-  // keep in sync.
-  if (has_clearance_past_adjoining_floats) {
-    if (!ResolveBfcBlockOffset(previous_inflow_position)) {
-      return NGLayoutResult::kBfcBlockOffsetResolved;
-    }
-
-    // If we had clearance past any adjoining floats, we already know where the
-    // child is going to be (the child's margins won't have any effect).
-    //
-    // Set the forced BFC block-offset to the appropriate clearance offset to
-    // force this placement of this child.
-    if (has_clearance_past_adjoining_floats) {
-      forced_bfc_block_offset =
-          ExclusionSpace().ClearanceOffset(child.Style().Clear(Style()));
-      is_pushed_by_floats = true;
-    }
-  }
 
   // Perform layout on the child.
   NGInflowChildData child_data =
