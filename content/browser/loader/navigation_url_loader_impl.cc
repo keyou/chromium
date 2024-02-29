@@ -280,8 +280,9 @@ std::unique_ptr<network::ResourceRequest> CreateResourceRequest(
   // first-party. Since fenced frames are main frames in terms of cookie
   // partitioning, this needs to be `is_main_frame` rather than
   // `is_outermost_main_frame`.
-  if (request_info.is_main_frame)
+  if (request_info.is_main_frame) {
     new_request->update_first_party_url_on_redirect = true;
+  }
 
   int load_flags = request_info.begin_params->load_flags;
   if (request_info.is_outermost_main_frame) {
@@ -362,8 +363,10 @@ void LogQueueTimeHistogram(base::StringPiece name,
                            bool is_outermost_main_frame) {
   auto* task = base::TaskAnnotator::CurrentTaskForThread();
   // Only log for non-delayed tasks with a valid queue_time.
-  if (!task || task->queue_time.is_null() || !task->delayed_run_time.is_null())
+  if (!task || task->queue_time.is_null() ||
+      !task->delayed_run_time.is_null()) {
     return;
+  }
 
   base::UmaHistogramTimes(
       base::StrCat(
@@ -376,8 +379,9 @@ void LogAcceptCHFrameStatus(AcceptCHFrameRestart status) {
 }
 
 bool IsSameOriginRedirect(const std::vector<GURL>& url_chain) {
-  if (url_chain.size() < 2)
+  if (url_chain.size() < 2) {
     return false;
+  }
 
   auto previous_origin = url::Origin::Create(url_chain[url_chain.size() - 2]);
   return previous_origin.IsSameOriginWith(url_chain[url_chain.size() - 1]);
@@ -436,6 +440,9 @@ void CheckParsedHeadersEquals(const network::mojom::ParsedHeadersPtr& lhs,
 
 // TODO(kinuko): Fix the method ordering and move these methods after the ctor.
 NavigationURLLoaderImpl::~NavigationURLLoaderImpl() {
+  TRACE_EVENT_WITH_FLOW0("navigation",
+                         "NavigationURLLoaderImpl::~NavigationURLLoaderImpl",
+                         TRACE_ID_LOCAL(this), TRACE_EVENT_FLAG_FLOW_IN);
   // If neither OnCompleted nor OnReceivedResponse has been invoked, the
   // request was canceled before receiving a response, so log a cancellation.
   // Results after receiving a non-error response are logged in the renderer,
@@ -455,6 +462,9 @@ void NavigationURLLoaderImpl::StartImpl(
         prefetched_signed_exchange_cache,
     mojo::PendingRemote<network::mojom::URLLoaderFactory> factory_for_webui,
     std::string accept_langs) {
+  TRACE_EVENT_WITH_FLOW0("navigation", "NavigationURLLoaderImpl::Start",
+                         TRACE_ID_LOCAL(this),
+                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!started_);
   started_ = true;
@@ -506,6 +516,10 @@ void NavigationURLLoaderImpl::CreateInterceptors(
     scoped_refptr<PrefetchedSignedExchangeCache>
         prefetched_signed_exchange_cache,
     const std::string& accept_langs) {
+  TRACE_EVENT_WITH_FLOW0("navigation",
+                         "NavigationURLLoaderImpl::CreateInterceptors",
+                         TRACE_ID_LOCAL(this),
+                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
   if (prefetched_signed_exchange_cache) {
     std::unique_ptr<NavigationLoaderInterceptor>
         prefetched_signed_exchange_interceptor =
@@ -526,8 +540,9 @@ void NavigationURLLoaderImpl::CreateInterceptors(
             *request_info_);
     // The interceptor may not be created in certain cases (e.g., the origin
     // is not secure).
-    if (service_worker_interceptor)
+    if (service_worker_interceptor) {
       interceptors_.push_back(std::move(service_worker_interceptor));
+    }
   }
 
   // Set-up an interceptor for SignedExchange handling if it is enabled.
@@ -538,10 +553,9 @@ void NavigationURLLoaderImpl::CreateInterceptors(
   }
 
   // Set up an interceptor for prefetch.
-  interceptors_.push_back(
-      std::make_unique<PrefetchURLLoaderInterceptor>(
-          frame_tree_node_id_, request_info_->initiator_document_token,
-          request_info_->prefetch_serving_page_metrics_container));
+  interceptors_.push_back(std::make_unique<PrefetchURLLoaderInterceptor>(
+      frame_tree_node_id_, request_info_->initiator_document_token,
+      request_info_->prefetch_serving_page_metrics_container));
 
   // See if embedders want to add interceptors.
   std::vector<std::unique_ptr<URLLoaderRequestInterceptor>>
@@ -562,8 +576,9 @@ void NavigationURLLoaderImpl::CreateInterceptors(
 
 void NavigationURLLoaderImpl::Restart() {
   // Cancel all inflight early hints preloads except for same origin redirects.
-  if (!IsSameOriginRedirect(url_chain_))
+  if (!IsSameOriginRedirect(url_chain_)) {
     early_hints_manager_.reset();
+  }
 
   // Clear `url_loader_` if it's not the default one (network). This allows
   // the restarted request to use a new loader, instead of, e.g., reusing the
@@ -650,8 +665,9 @@ void NavigationURLLoaderImpl::MaybeStartLoader(
 
     // If non-null `subresource_loader_params_` is returned, make sure
     // we skip the next interceptors.
-    if (subresource_loader_params_)
+    if (subresource_loader_params_) {
       interceptor_index_ = interceptors_.size();
+    }
   }
 
   // See if the next interceptor wants to handle the request.
@@ -686,8 +702,9 @@ void NavigationURLLoaderImpl::MaybeStartLoader(
 void NavigationURLLoaderImpl::FallbackToNonInterceptedRequest(
     bool reset_subresource_loader_params,
     const ResponseHeadUpdateParams& head_update_params) {
-  if (reset_subresource_loader_params)
+  if (reset_subresource_loader_params) {
     subresource_loader_params_.reset();
+  }
 
   intercepting_worker_start_time_ =
       head_update_params.load_timing_info.service_worker_start_time;
@@ -811,14 +828,16 @@ void NavigationURLLoaderImpl::OnReceiveEarlyHints(
   // Allow Early Hints preload only for outermost main frames. Calculating
   // appropriate parameters to create URLLoaderFactory for subframes, fenced
   // frames or portal are complicated and not supported yet.
-  if (frame_tree_node->GetParentOrOuterDocument())
+  if (frame_tree_node->GetParentOrOuterDocument()) {
     return;
+  }
 
   if (!early_hints_manager_) {
     absl::optional<NavigationEarlyHintsManagerParams> params =
         delegate_->CreateNavigationEarlyHintsManagerParams(*early_hints);
-    if (!params)
+    if (!params) {
       return;
+    }
     early_hints_manager_ = std::make_unique<NavigationEarlyHintsManager>(
         *browser_context_, *storage_partition_, frame_tree_node_id_,
         std::move(*params));
@@ -842,8 +861,9 @@ void NavigationURLLoaderImpl::OnReceiveResponse(
     early_hints_manager_.reset();
   }
 
-  if (!response_body)
+  if (!response_body) {
     return;
+  }
 
   response_body_ = std::move(response_body);
   received_response_ = true;
@@ -977,8 +997,9 @@ void NavigationURLLoaderImpl::OnReceiveRedirect(
     error = net::ERR_UNSAFE_REDIRECT;
   } else if (--redirect_limit_ == 0) {
     error = net::ERR_TOO_MANY_REDIRECTS;
-    if (redirect_info.is_signed_exchange_fallback_redirect)
+    if (redirect_info.is_signed_exchange_fallback_redirect) {
       UMA_HISTOGRAM_BOOLEAN("SignedExchange.FallbackRedirectLoop", true);
+    }
   }
   if (error != net::OK) {
     if (url_loader_) {
@@ -1090,8 +1111,9 @@ void NavigationURLLoaderImpl::OnAcceptCHFrameReceived(
 
   // Filter out hints that are disabled by features and the like.
   blink::EnabledClientHints filtered_enabled_hints;
-  for (const auto& hint : accept_ch_frame)
+  for (const auto& hint : accept_ch_frame) {
     filtered_enabled_hints.SetIsEnabled(hint, true);
+  }
   const std::vector<network::mojom::WebClientHintsType>& filtered_hints =
       filtered_enabled_hints.GetEnabledHints();
 
@@ -1216,6 +1238,10 @@ bool NavigationURLLoaderImpl::MaybeCreateLoaderForResponse(
 
 std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
 NavigationURLLoaderImpl::CreateURLLoaderThrottles() {
+  TRACE_EVENT_WITH_FLOW0("navigation",
+                         "NavigationURLLoaderImpl::CreateURLLoaderThrottles",
+                         TRACE_ID_LOCAL(this),
+                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
   auto throttles = CreateContentBrowserURLLoaderThrottles(
       *resource_request_, browser_context_, web_contents_getter_,
       navigation_ui_data_.get(), frame_tree_node_id_);
@@ -1332,6 +1358,9 @@ NavigationURLLoaderImpl::NavigationURLLoaderImpl(
       ukm_source_id_(FrameTreeNode::GloballyFindByID(frame_tree_node_id_)
                          ->navigation_request()
                          ->GetNextPageUkmSourceId()) {
+  TRACE_EVENT_WITH_FLOW0("navigation",
+                         "NavigationURLLoaderImpl::NavigationURLLoaderImpl",
+                         TRACE_ID_LOCAL(this), TRACE_EVENT_FLAG_FLOW_OUT);
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
@@ -1444,8 +1473,9 @@ NavigationURLLoaderImpl::NavigationURLLoaderImpl(
                                             ContentURLLoaderFactory::Create());
 #endif
 
-  for (auto& iter : non_network_url_loader_factories_)
+  for (auto& iter : non_network_url_loader_factories_) {
     known_schemes_.insert(iter.first);
+  }
 
   start_closure_ = base::BindOnce(
       &NavigationURLLoaderImpl::StartImpl, base::Unretained(this),
@@ -1575,8 +1605,9 @@ void NavigationURLLoaderImpl::FollowRedirect(
 
 bool NavigationURLLoaderImpl::SetNavigationTimeout(base::TimeDelta timeout) {
   // If the timer has already been started, don't change it.
-  if (timeout_timer_.IsRunning())
+  if (timeout_timer_.IsRunning()) {
     return false;
+  }
 
   // Fail the navigation with error code ERR_TIMED_OUT if the timer triggers
   // before the navigation commits. (This triggers OnComplete() rather than
@@ -1657,8 +1688,9 @@ void NavigationURLLoaderImpl::CreateURLLoaderFactoryWithHeaderClient(
     StoragePartitionImpl* partition) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (g_loader_factory_interceptor.Get())
+  if (g_loader_factory_interceptor.Get()) {
     g_loader_factory_interceptor.Get().Run(&factory_receiver);
+  }
 
   network::mojom::URLLoaderFactoryParamsPtr params =
       network::mojom::URLLoaderFactoryParams::New();
