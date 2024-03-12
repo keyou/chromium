@@ -62,6 +62,8 @@
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 
+#include <set>
+
 namespace blink {
 
 enum class ResourceType : uint8_t;
@@ -357,6 +359,8 @@ class PLATFORM_EXPORT ResourceFetcher
 
   void RecordLCPPSubresourceMetrics();
 
+  HashSet<String> GetBlockResources();
+
  private:
   friend class ResourceCacheValidationSuppressor;
   enum class StopFetchingTarget {
@@ -591,6 +595,7 @@ class PLATFORM_EXPORT ResourceFetcher
 
   Vector<ScheduledResourceTimingInfo> scheduled_resource_timing_reports_;
 
+  HashSet<String> block_resources_;
   HeapHashSet<Member<ResourceLoader>> loaders_;
   HeapHashSet<Member<ResourceLoader>> non_blocking_loaders_;
 

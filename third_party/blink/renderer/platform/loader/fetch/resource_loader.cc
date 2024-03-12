@@ -1565,4 +1565,8 @@ void ResourceLoader::CountOrbBlock() const {
   }
 }
 
+const KURL& ResourceLoader::GetSourceUrl() {
+  return resource_->Url();
+}
+
 }  // namespace blink

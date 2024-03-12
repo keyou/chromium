@@ -8126,6 +8126,9 @@ void RenderFrameHostImpl::DidStopLoading() {
     return;
   }
 
+  LOG(ERROR) << "block: DidStopLoading: " << this << ", "
+             << last_committed_url_.spec() << std::endl
+             << "=========================";
   was_discarded_ = false;
   loading_state_ = LoadingState::NONE;
 
@@ -10148,6 +10151,9 @@ void RenderFrameHostImpl::CommitNavigation(
   TRACE_EVENT2("navigation", "RenderFrameHostImpl::CommitNavigation",
                "navigation_request", navigation_request, "url",
                common_params->url);
+
+  LOG(ERROR) << "---------------------------------" << std::endl
+             << "CommitNavigation: " << this << ", " << common_params->url;
   DCHECK(!blink::IsRendererDebugURL(common_params->url));
   DCHECK(navigation_request);
   DCHECK_EQ(this, navigation_request->GetRenderFrameHost());

@@ -311,8 +311,11 @@ PausableScriptExecutor::PausableScriptExecutor(
   CHECK(script_state_);
   CHECK(script_state_->ContextIsValid());
   if (blocking_option_ == mojom::blink::LoadEventBlockingOption::kBlock) {
-    if (auto* window = DynamicTo<LocalDOMWindow>(GetExecutionContext()))
+    if (auto* window = DynamicTo<LocalDOMWindow>(GetExecutionContext())) {
+      LOG(ERROR)
+          << "block: IncrementLoadEventDelayCount: PausableScriptExecutor";
       window->document()->IncrementLoadEventDelayCount();
+    }
   }
 }
 

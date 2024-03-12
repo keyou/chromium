@@ -102,6 +102,10 @@ void ScriptRunner::QueueScriptForExecution(PendingScript* pending_script,
                                            DelayReasons delay_reasons) {
   DCHECK(pending_script);
   DCHECK(delay_reasons & static_cast<DelayReasons>(DelayReason::kLoad));
+
+  LOG(ERROR) << "block: IncrementLoadEventDelayCount: QueueScriptForExecution: "
+             << pending_script->GetScriptType() << ", "
+             << pending_script->UrlForTracing();
   document_->IncrementLoadEventDelayCount();
 
   switch (pending_script->GetSchedulingType()) {

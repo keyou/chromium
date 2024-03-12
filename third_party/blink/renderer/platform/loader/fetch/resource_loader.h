@@ -176,6 +176,8 @@ class PLATFORM_EXPORT ResourceLoader final
   void CancelIfWebBundleTokenMatches(
       const base::UnguessableToken& web_bundle_token);
 
+  const KURL& GetSourceUrl();
+
  private:
   friend class SubresourceIntegrityTest;
   friend class ResourceLoaderIsolatedCodeCacheTest;

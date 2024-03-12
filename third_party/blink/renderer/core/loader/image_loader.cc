@@ -841,6 +841,11 @@ void ImageLoader::ImageNotifyFinished(ImageResourceContent* content) {
                     WrapPersistent(this),
                     std::make_unique<IncrementLoadEventDelayCount>(
                         GetElement()->GetDocument())));
+
+  AtomicString image_source_url = element_->ImageSourceURL();
+  const KURL url = ImageSourceToKURL(image_source_url);
+  LOG(ERROR) << "block: IncrementLoadEventDelayCount: ImageNotifyFinished: "
+             << image_source_url.GetString().Utf8();
 }
 
 LayoutImageResource* ImageLoader::GetLayoutImageResource() const {

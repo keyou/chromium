@@ -3890,6 +3890,20 @@ static bool AllDescendantsAreComplete(Document* document) {
 }
 
 bool Document::ShouldComplete() {
+  if (parsing_state_ == kFinishedParsing) {
+    if (fetcher_->BlockingRequestCount() > 0) {
+      for (auto&& resource : fetcher_->GetBlockResources()) {
+        LOG(ERROR) << "block: ShouldComplete: BlockingRequestCount: "
+                   << fetcher_->BlockingRequestCount() << ", "
+                   << resource.Utf8();
+      }
+    }
+    if (IsDelayingLoadEvent()) {
+      LOG(ERROR) << "block: ShouldComplete: DelayingLoadEventCount: "
+                 << load_event_delay_count_;
+    }
+  }
+
   return parsing_state_ == kFinishedParsing &&
          !fetcher_->BlockingRequestCount() && !IsDelayingLoadEvent() &&
          !javascript_url_task_handle_.IsActive() &&

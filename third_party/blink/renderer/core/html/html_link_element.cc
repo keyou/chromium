@@ -328,6 +328,9 @@ void HTMLLinkElement::ScheduleEvent() {
           WTF::BindOnce(
               &HTMLLinkElement::DispatchPendingEvent, WrapPersistent(this),
               std::make_unique<IncrementLoadEventDelayCount>(GetDocument())));
+
+  LOG(ERROR) << "block: IncrementLoadEventDelayCount: HTMLLinkElement: "
+             << Href().GetString().Utf8();
 }
 
 void HTMLLinkElement::SetToPendingState() {

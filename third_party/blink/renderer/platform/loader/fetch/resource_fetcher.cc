@@ -1937,6 +1937,18 @@ void ResourceFetcher::ClearContext() {
   }
 }
 
+HashSet<String> ResourceFetcher::GetBlockResources() {
+  HashSet<String> new_resources;
+  for (auto&& loader : loaders_) {
+    new_resources.insert(loader->GetSourceUrl().GetString());
+  }
+  new_resources.RemoveAll(block_resources_);
+  for (auto&& resource : new_resources) {
+    block_resources_.insert(resource);
+  }
+  return new_resources;
+}
+
 int ResourceFetcher::BlockingRequestCount() const {
   return loaders_.size();
 }
