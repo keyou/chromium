@@ -41,6 +41,15 @@
 #include "ui/gfx/geometry/axis_transform2d.h"
 #include "url/gurl.h"
 
+#include <iomanip>
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
+#include "base/path_service.h"
+#include "base/strings/string_number_conversions.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkStream.h"
+#include "third_party/skia/include/encode/SkPngEncoder.h"
+
 namespace cc {
 
 // Subclass for InUsePoolResource that holds ownership of a gpu-rastered backing
@@ -107,6 +116,85 @@ GpuRasterBufferProvider::RasterBufferImpl::RasterBufferImpl(
 
 GpuRasterBufferProvider::RasterBufferImpl::~RasterBufferImpl() = default;
 
+std::string VoidPtrToHexString(const void* ptr, size_t size) {
+  TRACE_EVENT2("gpu", "VoidPtrToHexString", "ptr", ptr, "size", size);
+  std::stringstream ss;
+  ss << std::hex << std::setfill('0');
+  const unsigned char* bytes = static_cast<const unsigned char*>(ptr);
+  int latest = 0;
+  for (size_t i = 0; i < size; ++i) {
+    if (bytes[i] == latest) {
+      continue;
+    }
+    latest = bytes[i];
+    ss << std::setw(2) << static_cast<unsigned>(bytes[i]);
+    if (ss.tellp() > 500) {
+      break;
+    }
+  }
+  return ss.str();
+}
+
+base::FilePath GetTempFile() {
+  static int index = 10000;
+
+  // base::FilePath temp_path("/Users/keyou/Pictures/raster/");
+  base::FilePath temp_path;
+  CHECK(base::GetTempDir(&temp_path));
+  // LOG(INFO) << "keyou: gpu: temp path: " << temp_path;
+  temp_path = temp_path.AppendASCII("raster");
+  if (!base::PathExists(temp_path)) {
+    CHECK(base::CreateDirectory(temp_path));
+    // LOG(INFO) << "keyou: gpu: temp path2: " << temp_path;
+  } else {
+    // base::DeletePathRecursively(temp_path);
+    // CHECK(base::CreateDirectory(temp_path));
+  }
+  CHECK(base::PathExists(temp_path));
+  auto path = temp_path.AppendASCII(base::NumberToString(index++) + ".png");
+  return path;
+}
+
+// 需要开启 --no-sandbox
+bool SaveBitmapToFile(const SkBitmap& bitmap, const char* filename) {
+  SkFILEWStream fileStream(filename);
+  if (!fileStream.isValid()) {
+    return false;
+  }
+
+  SkDynamicMemoryWStream stream;
+  CHECK(SkPngEncoder::Encode(&stream, bitmap.pixmap(), {}));
+
+  auto encodedData = stream.detachAsData();
+  CHECK(fileStream.write(encodedData->data(), encodedData->size()));
+
+  LOG(INFO) << "keyou: gpu: SaveBitmapToFile: " << filename
+            << " , resource_size: " << bitmap.info().width() << ","
+            << bitmap.info().height();
+
+  return true;
+}
+
+SkBitmap ReadbackMailbox(gpu::raster::RasterInterface* ri,
+                         const gpu::Mailbox& mailbox,
+                         const gfx::Size& image_size,
+                         sk_sp<SkColorSpace> color_space = nullptr) {
+  TRACE_EVENT0("gpu", "ReadbackMailboxKY");
+  SkImageInfo image_info = SkImageInfo::MakeN32Premul(
+      image_size.width(), image_size.height(), color_space);
+  SkBitmap result;
+  result.allocPixels(image_info);
+  ri->ReadbackImagePixels(mailbox, image_info, image_info.minRowBytes(), 0, 0,
+                          0, result.getPixels());
+  CHECK(ri->GetGraphicsResetStatusKHR() == GL_NO_ERROR &&
+        ri->GetError() == GL_NO_ERROR);
+  auto value = VoidPtrToHexString(result.getPixels(), result.computeByteSize());
+  TRACE_EVENT2("gpu", "ReadbackMailbox3KY", "pixels", value, "size",
+               result.computeByteSize());
+  // LOG(INFO) << "keyou: VoidPtrToHexString: " << value;
+  return result;
+}
+
 void GpuRasterBufferProvider::RasterBufferImpl::Playback(
     const RasterSource* raster_source,
     const gfx::Rect& raster_full_rect,
@@ -124,6 +212,12 @@ void GpuRasterBufferProvider::RasterBufferImpl::Playback(
   PlaybackOnWorkerThread(raster_source, raster_full_rect, raster_dirty_rect,
                          new_content_id, transform, playback_settings, url);
 
+  if (raster_source->debug_name().find("messageTip__countTip") !=
+      std::string::npos) {
+    auto bitmap = ReadbackMailbox(ri, backing_->mailbox, resource_size_);
+    auto path = GetTempFile();
+    CHECK(SaveBitmapToFile(bitmap, path.AsUTF8Unsafe().c_str()));
+  }
   backing_->mailbox_sync_token =
       viz::ClientResourceProvider::GenerateSyncTokenHelper(ri);
   backing_->returned_sync_token = gpu::SyncToken();
