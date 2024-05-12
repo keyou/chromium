@@ -462,13 +462,13 @@ LogicalOffset NGBlockLayoutAlgorithm::CalculateLogicalOffset(
 
 const NGLayoutResult* NGBlockLayoutAlgorithm::Layout() {
   auto node = Node().ToString();
-  LOG(ERROR) << "keyou1: node: " << node.Utf8();
+  LOG(ERROR) << "keyou1: Layout: node: " << node.Utf8();
   auto* dom_node = Node().GetDOMNode();
   DCHECK(dom_node);
   auto node_str = Node().GetDOMNode()->ToTreeStringForThis().Utf8();
   auto* c_str = node_str.c_str();
-  LOG(ERROR) << "keyou1: layout node: " << c_str;
-  LOG(ERROR) << "keyou1: ChildAvailableSize: " << ChildAvailableSize()
+  // LOG(ERROR) << "keyou1: Layout: layout node: " << c_str;
+  LOG(ERROR) << "keyou1: Layout: ChildAvailableSize: " << ChildAvailableSize()
              << ", ConstraintSpace: " << ConstraintSpace();
   const NGLayoutResult* result = nullptr;
   // Inline children require an inline child layout context to be
@@ -480,11 +480,12 @@ const NGLayoutResult* NGBlockLayoutAlgorithm::Layout() {
   else
     result = Layout(nullptr);
   const auto& physical_fragment = result->PhysicalFragment();
-  LOG(ERROR) << "keyou1: result: " << Node().GetDOMNode()->ToString()
+  LOG(ERROR) << "keyou1: Layout: result: " << Node().GetDOMNode()->ToString()
              << ", \nphysical_fragment: " << physical_fragment.ToString()
              << ", intrinsic_block_size_: "
              << result->IntrinsicBlockSize().ToString() << ", BfcBlockOffset: "
              << result->BfcBlockOffset().value_or(LayoutUnit()).ToString();
+  DCHECK_EQ(result->Status(), NGLayoutResult::kSuccess);
   switch (result->Status()) {
     case NGLayoutResult::kNeedsEarlierBreak:
       // If we found a good break somewhere inside this block, re-layout and

@@ -65,22 +65,7 @@ class CORE_EXPORT NGBoxFragmentBuilder final
   }
 
   void SetInitialFragmentGeometry(
-      const NGFragmentGeometry& initial_fragment_geometry) {
-    initial_fragment_geometry_ = &initial_fragment_geometry;
-    size_ = initial_fragment_geometry_->border_box_size;
-    is_initial_block_size_indefinite_ = size_.block_size == kIndefiniteSize;
-    LOG(ERROR) << "keyou: border_box_size: " << size_;
-    border_padding_ =
-        initial_fragment_geometry.border + initial_fragment_geometry.padding;
-    border_scrollbar_padding_ =
-        border_padding_ + initial_fragment_geometry.scrollbar;
-    original_border_scrollbar_padding_block_start_ =
-        border_scrollbar_padding_.block_start;
-    if (node_) {
-      child_available_size_ = CalculateChildAvailableSize(
-          space_, To<NGBlockNode>(node_), size_, border_scrollbar_padding_);
-    }
-  }
+      const NGFragmentGeometry& initial_fragment_geometry);
 
   void AdjustBorderScrollbarPaddingForFragmentation(
       const NGBlockBreakToken* break_token) {

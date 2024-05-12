@@ -1554,9 +1554,9 @@ NGFragmentGeometry CalculateInitialFragmentGeometry(
       ClampScrollbarToContentBox(&scrollbar,
                                  *inline_size - border_padding.InlineSum());
     }
-    LOG(ERROR) << "keyou: inline_size1: " << *inline_size
-               << ", constraint_space: " << constraint_space
-               << ", border_padding: " << border_padding;
+    // LOG(ERROR) << "keyou: inline_size1: " << *inline_size
+    //            << ", constraint_space: " << constraint_space
+    //            << ", border_padding: " << border_padding;
   }
 
   LayoutUnit block_size = ComputeInitialBlockSizeForFragment(

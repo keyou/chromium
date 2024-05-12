@@ -64,17 +64,6 @@ void LayoutBlockFlow::Trace(Visitor* visitor) const {
 DISABLE_CFI_PERF
 bool LayoutBlockFlow::CreatesNewFormattingContext() const {
   NOT_DESTROYED();
-  LOG(ERROR) << "CreatesNewFormattingContext: " << ToString();
-  LOG(ERROR) << ", IsInline: " << IsInline()
-             << ", IsFloatingOrOutOfFlowPositioned: "
-             << IsFloatingOrOutOfFlowPositioned()
-             << ", IsScrollContainer: " << IsScrollContainer()
-             << ", IsFlexItemIncludingDeprecatedAndNG: "
-             << IsFlexItemIncludingDeprecatedAndNG()
-             << ", IsCustomItem: " << IsCustomItem()
-             << ", IsDocumentElement: " << IsDocumentElement()
-             << ", IsGridItemIncludingNG: " << IsGridItemIncludingNG()
-             << ", IsWritingModeRoot: " << IsWritingModeRoot();
   if (IsInline() || IsFloatingOrOutOfFlowPositioned() || IsScrollContainer() ||
       IsFlexItemIncludingDeprecatedAndNG() || IsCustomItem() ||
       IsDocumentElement() || IsGridItemIncludingNG() || IsWritingModeRoot() ||
@@ -83,7 +72,19 @@ bool LayoutBlockFlow::CreatesNewFormattingContext() const {
       StyleRef().IsDeprecatedWebkitBoxWithVerticalLineClamp() ||
       StyleRef().SpecifiesColumns() ||
       StyleRef().GetColumnSpan() == EColumnSpan::kAll) {
-    // The specs require this object to establish a new formatting context.
+    LOG(ERROR) << "keyou: IsInline: " << IsInline()
+               << ", IsFloatingOrOutOfFlowPositioned: "
+               << IsFloatingOrOutOfFlowPositioned()
+               << ", IsScrollContainer: " << IsScrollContainer()
+               << ", IsFlexItemIncludingDeprecatedAndNG: "
+               << IsFlexItemIncludingDeprecatedAndNG()
+               << ", IsCustomItem: " << IsCustomItem()
+               << ", IsDocumentElement: " << IsDocumentElement()
+               << ", IsGridItemIncludingNG: " << IsGridItemIncludingNG()
+               << ", IsWritingModeRoot: " << IsWritingModeRoot();
+    LOG(ERROR) << "keyou: CreatesNewFormattingContext: " << ToString();
+    // The specs require this object to establish a new formatting
+    // context.
     return true;
   }
 

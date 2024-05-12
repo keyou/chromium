@@ -214,8 +214,14 @@ NOINLINE void DetermineAlgorithmAndRun(const NGLayoutAlgorithmParams& params,
 
 inline const NGLayoutResult* LayoutWithAlgorithm(
     const NGLayoutAlgorithmParams& params) {
-  LOG(ERROR) << "keyou: border_box_size3: "
-             << params.fragment_geometry.border_box_size;
+  LOG(ERROR) << "keyou: LayoutWithAlgorithm: "
+             << "node: " << params.node.ToString()
+             << ", space: " << params.space
+             << ", fragment_geometry: border_box_size: "
+             << params.fragment_geometry.border_box_size
+             << ", border: " << params.fragment_geometry.border
+             << ", scrollbar: " << params.fragment_geometry.scrollbar
+             << ", padding: " << params.fragment_geometry.padding;
   const NGLayoutResult* result = nullptr;
   DetermineAlgorithmAndRun(params,
                            [&result](NGLayoutAlgorithmOperations* algorithm) {
@@ -496,8 +502,11 @@ const NGLayoutResult* NGBlockNode::Layout(
   if (!fragment_geometry) {
     fragment_geometry =
         CalculateInitialFragmentGeometry(constraint_space, *this, break_token);
-    LOG(ERROR) << "keyou: border_box_size2: "
-               << fragment_geometry->border_box_size;
+    LOG(ERROR) << "keyou: InitialFragmentGeometry: border_box_size: "
+               << fragment_geometry->border_box_size
+               << ", border: " << fragment_geometry->border
+               << ", scrollbar: " << fragment_geometry->scrollbar
+               << ", padding: " << fragment_geometry->padding;
   }
 
   if (

@@ -288,13 +288,13 @@ MinMaxSizesResult ScrollerLayoutAlgorithm::ComputeMinMaxSizes(
 
 const NGLayoutResult* ScrollerLayoutAlgorithm::Layout() {
   auto node = Node().ToString();
-  LOG(ERROR) << "keyou: node: " << node.Utf8();
+  LOG(ERROR) << "keyou: Layout: node: " << node.Utf8();
   auto* dom_node = Node().GetDOMNode();
   DCHECK(dom_node);
   auto node_str = Node().GetDOMNode()->ToTreeStringForThis().Utf8();
   auto* c_str = node_str.c_str();
-  LOG(ERROR) << "keyou: layout node: " << c_str;
-  LOG(ERROR) << "keyou: ChildAvailableSize: " << ChildAvailableSize()
+  // LOG(ERROR) << "keyou: Layout: layout node: " << c_str;
+  LOG(ERROR) << "keyou: Layout: ChildAvailableSize: " << ChildAvailableSize()
              << ", ConstraintSpace: " << ConstraintSpace();
 
   LayoutUnit content_edge = BorderScrollbarPadding().block_start;
@@ -438,22 +438,24 @@ const NGLayoutResult* ScrollerLayoutAlgorithm::Layout() {
   // To save space of the stack when we recurse into children, the rest of this
   // function is continued within |FinishLayout|. However it should be read as
   // one function.
-  return FinishLayout(&previous_inflow_position, inline_child_layout_context);
+  auto result =
+      FinishLayout(&previous_inflow_position, inline_child_layout_context);
 
   // LayoutUnit intrinsic_block_size(kIndefiniteSize);
   // container_builder_.SetIntrinsicBlockSize(intrinsic_block_size);
 
-  LayoutUnit block_size(17);
+  // LayoutUnit block_size(17);
   // container_builder_.SetBfcBlockOffset(LayoutUnit(8));
-  container_builder_.SetFragmentsTotalBlockSize(block_size);
+  // container_builder_.SetFragmentsTotalBlockSize(block_size);
 
-  auto* result = container_builder_.ToBoxFragment();
+  // auto* result = container_builder_.ToBoxFragment();
   const auto& physical_fragment = result->PhysicalFragment();
-  LOG(ERROR) << "keyou: result: " << Node().GetDOMNode()->ToString()
+  LOG(ERROR) << "keyou: Layout: result: " << Node().GetDOMNode()->ToString()
              << ", \nphysical_fragment: " << physical_fragment.ToString()
              << ", intrinsic_block_size_: "
              << result->IntrinsicBlockSize().ToString() << ", BfcBlockOffset: "
              << result->BfcBlockOffset().value_or(LayoutUnit(999)).ToString();
+  DCHECK_EQ(result->Status(), NGLayoutResult::kSuccess);
   return result;
 }
 
