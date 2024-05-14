@@ -1382,6 +1382,10 @@ void ContainerNode::RecalcDescendantStyles(
   DCHECK(GetDocument().InStyleRecalc());
   DCHECK(!NeedsStyleRecalc());
 
+  TRACE_EVENT2("blink", "ContainerNode::RecalcDescendantStylesKY", "change",
+               change.ToString(), "ChildNeedsStyleRecalc",
+               this->ChildNeedsStyleRecalc());
+
   for (Node* child = firstChild(); child; child = child->nextSibling()) {
     if (!change.TraverseChild(*child)) {
       continue;

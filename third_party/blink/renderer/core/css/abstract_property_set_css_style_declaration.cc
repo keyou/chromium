@@ -34,6 +34,8 @@
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/style_property_shorthand.h"
 
+#include "base/debug/stack_trace.h"
+
 namespace blink {
 
 unsigned AbstractPropertySetCSSStyleDeclaration::length() const {
@@ -55,6 +57,8 @@ void AbstractPropertySetCSSStyleDeclaration::setCSSText(
     const ExecutionContext* execution_context,
     const String& text,
     ExceptionState&) {
+  TRACE_EVENT1("blink", "AbstractPropertySetCSSStyleDeclaration::setCSSTextKY",
+               "text", text.Utf8());
   StyleAttributeMutationScope mutation_scope(this);
   WillMutate();
 

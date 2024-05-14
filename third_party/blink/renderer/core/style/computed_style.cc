@@ -443,6 +443,42 @@ ComputedStyle::ComputeDifferenceIgnoringInheritedFirstLineStyle(
   }
   if (!old_style.IndependentInheritedEqual(new_style) ||
       !inherited_variables_equal) {
+    std::string css_names = "";
+    //     "inherited_data_:" +
+    //     std::to_string(old_style.inherited_data_.Get() ==
+    //                    new_style.inherited_data_.Get()) +
+    //     ", inherited_data_:" +
+    //     std::to_string(old_style.inherited_data_->color_ ==
+    //                    new_style.inherited_data_->color_) +
+    //     ", pointer_events_:" +
+    //     std::to_string(old_style.pointer_events_ ==
+    //     new_style.pointer_events_) +
+    //     ", text_transform_:" +
+    //     std::to_string(old_style.text_transform_ ==
+    //     new_style.text_transform_) +
+    //     ", visibility_:" +
+    //     std::to_string(old_style.visibility_ == new_style.visibility_) +
+    //     ", border_collapse_:" +
+    //     std::to_string(old_style.border_collapse_ ==
+    //                    new_style.border_collapse_) +
+    //     ", box_direction_:" +
+    //     std::to_string(old_style.box_direction_ == new_style.box_direction_)
+    //     +
+    //     ", caption_side_:" +
+    //     std::to_string(old_style.caption_side_ == new_style.caption_side_) +
+    //     ", empty_cells_:" +
+    //     std::to_string(old_style.empty_cells_ == new_style.empty_cells_) +
+    //     ", is_inert_:" +
+    //     std::to_string(old_style.is_inert_ == new_style.is_inert_) +
+    //     ", list_style_position_:" +
+    //     std::to_string(old_style.list_style_position_ ==
+    //                    new_style.list_style_position_) +
+    //     ", rtl_ordering_:" +
+    //     std::to_string(old_style.rtl_ordering_ == new_style.rtl_ordering_);
+
+    TRACE_EVENT2("blink", "kIndependentInheritedKY",
+                 "inherited_variables_equal", inherited_variables_equal,
+                 "css_names", css_names);
     return Difference::kIndependentInherited;
   }
   if (non_inherited_equal) {

@@ -3322,6 +3322,9 @@ void Element::RecalcStyle(const StyleRecalcChange change,
          this == GetDocument().documentElement())
       << "No recalc for Elements outside flat tree";
 
+  TRACE_EVENT2("blink", "Element::RecalcStyleKY", "this", this->ToString(),
+               "change", change.ToString());
+
   DisplayLockStyleScope display_lock_style_scope(this);
   if (HasCustomStyleCallbacks()) {
     WillRecalcStyle(change);
@@ -3333,6 +3336,7 @@ void Element::RecalcStyle(const StyleRecalcChange change,
   local_style_recalc_context.style_scope_frame = &style_scope_frame;
 
   StyleRecalcChange child_change = change.ForChildren(*this);
+  auto old_child_change = child_change;
   if (change.ShouldRecalcStyleFor(*this)) {
     child_change = RecalcOwnStyle(change, local_style_recalc_context);
     if (GetStyleChangeType() == kSubtreeStyleChange) {
@@ -3345,6 +3349,12 @@ void Element::RecalcStyle(const StyleRecalcChange change,
     SetNeedsReattachLayoutTree();
     child_change = child_change.ForceReattachLayoutTree();
     ClearNeedsStyleRecalc();
+  }
+
+  {
+    TRACE_EVENT2("blink", "child_changeKY", "old_child_change",
+                 old_child_change.ToString(), "new_child_change",
+                 child_change.ToString());
   }
 
   // We may need to update the internal CSSContainerValues of the
@@ -3528,6 +3538,8 @@ static bool NeedsContainerQueryEvaluator(
 static const StyleRecalcChange ApplyComputedStyleDiff(
     const StyleRecalcChange change,
     ComputedStyle::Difference diff) {
+  TRACE_EVENT2("blink", "ApplyComputedStyleDiffKY", "change", change.ToString(),
+               "diff", static_cast<int>(diff));
   if (change.RecalcDescendants() ||
       diff < ComputedStyle::Difference::kPseudoElementStyle) {
     return change;
@@ -3583,6 +3595,7 @@ StyleRecalcChange Element::RecalcOwnStyle(
     const StyleRecalcChange change,
     const StyleRecalcContext& style_recalc_context) {
   DCHECK(GetDocument().InStyleRecalc());
+  TRACE_EVENT0("blink", "Element::RecalcOwnStyleKY");
 
   StyleRecalcContext new_style_recalc_context = style_recalc_context;
   if (change.RecalcChildren() || change.RecalcContainerQueryDependent(*this)) {
@@ -9076,6 +9089,7 @@ void Element::InvalidateStyleAttribute(
 void Element::RecalcTransitionPseudoTreeStyle(
     const Vector<AtomicString>& view_transition_names) {
   DCHECK_EQ(this, GetDocument().documentElement());
+  TRACE_EVENT0("blink", "Element::RecalcTransitionPseudoTreeStyleKY");
 
   DisplayLockStyleScope display_lock_style_scope(this);
   if (!display_lock_style_scope.ShouldUpdateChildStyle()) {

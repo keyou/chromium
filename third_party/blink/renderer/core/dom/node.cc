@@ -1142,16 +1142,29 @@ bool Node::ShouldSkipMarkingStyleDirty() const {
 }
 
 void Node::MarkAncestorsWithChildNeedsStyleRecalc() {
+  TRACE_EVENT2("blink", "Node::MarkAncestorsWithChildNeedsStyleRecalcKY",
+               "this", this->ToString(), "parent",
+               parentNode() ? parentNode()->ToString() : "null");
   Element* style_parent = GetStyleRecalcParent();
   bool parent_dirty = style_parent && style_parent->IsDirtyForStyleRecalc();
   Element* ancestor = style_parent;
+
+  TRACE_EVENT2("blink", "foreach:ancestorKY", "ancestor",
+               ancestor ? ancestor->ToString() : "null", "parent_dirty",
+               parent_dirty);
+
   for (; ancestor && !ancestor->ChildNeedsStyleRecalc();
        ancestor = ancestor->GetStyleRecalcParent()) {
+    TRACE_EVENT2("blink", "iterator:ancestorKY", "ancestor",
+                 ancestor ? ancestor->ToString() : "null", "parent_dirty",
+                 parent_dirty);
     if (!ancestor->isConnected())
       return;
     ancestor->SetChildNeedsStyleRecalc();
-    if (ancestor->IsDirtyForStyleRecalc())
+    if (ancestor->IsDirtyForStyleRecalc()) {
+      TRACE_EVENT0("blink", "ancestor->IsDirtyForStyleRecalcKY");
       break;
+    }
 
     // If we reach a locked ancestor, we should abort since the ancestor marking
     // will be done when the lock is committed.

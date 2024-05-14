@@ -59,6 +59,7 @@ cc::ImageType FileExtensionToImageType(String image_extension) {
     return cc::ImageType::kJPEG;
   }
   if (image_extension == "webp") {
+    // return cc::ImageType::kInvalid;
     return cc::ImageType::kWEBP;
   }
   if (image_extension == "gif") {

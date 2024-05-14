@@ -3494,6 +3494,10 @@ void StyleEngine::RecalcStyle(StyleRecalcChange change,
   Element& root_element = style_recalc_root_.RootElement();
   Element* parent = FlatTreeTraversal::ParentElement(root_element);
 
+  TRACE_EVENT2("blink", "StyleEngine::RecalcStyleKY", "style_recalc_root_",
+               root_element.ToString(), "parent",
+               parent ? parent->ToString() : "null");
+
   SelectorFilterRootScope filter_scope(parent);
   root_element.RecalcStyle(change, style_recalc_context);
 
@@ -3739,6 +3743,9 @@ void StyleEngine::UpdateStyleInvalidationRoot(ContainerNode* ancestor,
 
 void StyleEngine::UpdateStyleRecalcRoot(ContainerNode* ancestor,
                                         Node* dirty_node) {
+  TRACE_EVENT2("blink", "StyleEngine::UpdateStyleRecalcRootKY", "ancestor",
+               ancestor ? ancestor->ToString() : "null", "InDOMRemoval",
+               InDOMRemoval());
   if (!GetDocument().IsActive()) {
     return;
   }
@@ -3766,6 +3773,10 @@ void StyleEngine::UpdateStyleRecalcRoot(ContainerNode* ancestor,
 void StyleEngine::UpdateLayoutTreeRebuildRoot(ContainerNode* ancestor,
                                               Node* dirty_node) {
   DCHECK(!InDOMRemoval());
+  TRACE_EVENT2("blink", "StyleEngine::UpdateLayoutTreeRebuildRootKY",
+               "ancestor", ancestor ? ancestor->ToString() : "null",
+               "dirty_node", dirty_node->ToString());
+
   if (!GetDocument().IsActive()) {
     return;
   }
