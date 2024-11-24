@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/compiler_specific.h"
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
+// #pragma allow_unsafe_buffers
 #endif
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_TO_V8_TRAITS_H_
@@ -352,10 +353,11 @@ template <typename ElementIDLType, typename ContainerType>
     DCHECK(end_it != current_it);
     std::ignore = end_it;
     if constexpr (WTF::IsAnyMemberType<decltype(*current_it)>::value) {
-      return ToV8Traits<ElementIDLType>::ToV8(script_state,
-                                              (current_it++)->Get());
+      return ToV8Traits<ElementIDLType>::ToV8(
+          script_state, (UNSAFE_BUFFERS(current_it++))->Get());
     } else {
-      return ToV8Traits<ElementIDLType>::ToV8(script_state, *(current_it++));
+      return ToV8Traits<ElementIDLType>::ToV8(script_state,
+                                              *(UNSAFE_BUFFERS(current_it++)));
     }
   };
   return v8::Array::New(script_state->GetContext(),
@@ -406,7 +408,7 @@ template <typename ValueIDLType, typename ContainerType>
   v8::Local<v8::Context> context = script_state->GetContext();
   typename ContainerType::const_iterator end = record.end();
   for (typename ContainerType::const_iterator iter = record.begin();
-       iter != end; ++iter) {
+       iter != end; UNSAFE_BUFFERS(++iter)) {
     v8::Local<v8::Value> v8_value;
     if constexpr (WTF::IsAnyMemberType<decltype(iter->second)>::value) {
       v8_value =

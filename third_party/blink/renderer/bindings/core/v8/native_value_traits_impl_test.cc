@@ -4,7 +4,7 @@
 
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
+// #pragma allow_unsafe_buffers
 #endif
 
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
@@ -392,8 +392,11 @@ TEST(NativeValueTraitsImplTest, IDLBigint) {
 template <typename Arr>
 v8::Local<Arr> MakeArray(v8::Isolate* isolate, size_t size) {
   auto arr = Arr::New(isolate, size);
-  uint8_t* it = static_cast<uint8_t*>(arr->Data());
-  std::iota(it, it + arr->ByteLength(), 0);
+  // uint8_t* it = static_cast<uint8_t*>(arr->Data());
+  v8::MemorySpan<uint8_t> span(static_cast<uint8_t*>(arr->Data()),
+                               arr->ByteLength());
+  std::iota(span.begin(), span.end(), 0);
+  // std::iota(it, it + arr->ByteLength(), 0);
   return arr;
 }
 

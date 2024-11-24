@@ -32,6 +32,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_BLOOM_FILTER_H_
 
 #include "base/check_op.h"
+#include "base/containers/span.h"
 #include "base/dcheck_is_on.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
@@ -67,6 +68,7 @@ class BloomFilter {
   }
 
   unsigned* GetRawData() { return bit_array_; }
+  base::span<unsigned> GetRawDataSpan() { return base::span(bit_array_); }
 
  private:
   using BitArrayUnit = unsigned;

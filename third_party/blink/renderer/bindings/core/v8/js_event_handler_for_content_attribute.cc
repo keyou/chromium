@@ -4,7 +4,7 @@
 
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
+// #pragma allow_unsafe_buffers
 #endif
 
 #include "third_party/blink/renderer/bindings/core/v8/js_event_handler_for_content_attribute.h"
@@ -174,42 +174,43 @@ v8::Local<v8::Value> JSEventHandlerForContentAttribute::GetCompiledHandler(
   // Note: Strict is set by V8.
   v8::Isolate* isolate = script_state_of_event_target->GetIsolate();
   v8::Local<v8::String> parameter_list[5];
+  base::span parameter_list_span(parameter_list);
   size_t parameter_list_size = 0;
   if (IsOnErrorEventHandler() && window) {
     // SVG requires to introduce evt as an alias to event in event handlers.
     // See ANNOTATION 3: https://www.w3.org/TR/SVG/interact.html#SVGEvents
-    parameter_list[parameter_list_size++] =
+    parameter_list_span[parameter_list_size++] =
         V8String(isolate, element && element->IsSVGElement() ? "evt" : "event");
-    parameter_list[parameter_list_size++] = V8String(isolate, "source");
-    parameter_list[parameter_list_size++] = V8String(isolate, "lineno");
-    parameter_list[parameter_list_size++] = V8String(isolate, "colno");
-    parameter_list[parameter_list_size++] = V8String(isolate, "error");
+    parameter_list_span[parameter_list_size++] = V8String(isolate, "source");
+    parameter_list_span[parameter_list_size++] = V8String(isolate, "lineno");
+    parameter_list_span[parameter_list_size++] = V8String(isolate, "colno");
+    parameter_list_span[parameter_list_size++] = V8String(isolate, "error");
   } else {
     // SVG requires to introduce evt as an alias to event in event handlers.
     // See ANNOTATION 3: https://www.w3.org/TR/SVG/interact.html#SVGEvents
-    parameter_list[parameter_list_size++] =
+    parameter_list_span[parameter_list_size++] =
         V8String(isolate, element && element->IsSVGElement() ? "evt" : "event");
   }
   DCHECK_LE(parameter_list_size, std::size(parameter_list));
 
   v8::Local<v8::Object> scopes[3];
+  base::span scopes_span(scopes);
   size_t scopes_size = 0;
   if (element) {
-    scopes[scopes_size++] =
+    scopes_span[scopes_size++] =
         ToV8Traits<Document>::ToV8(script_state_of_event_target, document)
             .As<v8::Object>();
   }
   if (form_owner) {
-    scopes[scopes_size++] = ToV8Traits<HTMLFormElement>::ToV8(
+    scopes_span[scopes_size++] = ToV8Traits<HTMLFormElement>::ToV8(
                                 script_state_of_event_target, form_owner)
                                 .As<v8::Object>();
   }
   if (element) {
-    scopes[scopes_size++] =
+    scopes_span[scopes_size++] =
         ToV8Traits<Element>::ToV8(script_state_of_event_target, element)
             .As<v8::Object>();
   }
-  DCHECK_LE(scopes_size, std::size(scopes));
 
   v8::ScriptOrigin origin(
       V8String(isolate, source_url_), position_.line_.ZeroBasedInt(),

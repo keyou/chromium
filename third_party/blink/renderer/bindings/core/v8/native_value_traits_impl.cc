@@ -4,7 +4,7 @@
 
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
+// #pragma allow_unsafe_buffers
 #endif
 
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
@@ -104,8 +104,11 @@ namespace bindings::internal {
 ByteSpanWithInlineStorage& ByteSpanWithInlineStorage::operator=(
     const ByteSpanWithInlineStorage& r) {
   if (r.span_.data() == r.inline_storage_) {
-    memcpy(inline_storage_, r.inline_storage_, sizeof inline_storage_);
-    span_ = base::make_span(inline_storage_, r.span_.size());
+    // memcpy(inline_storage_, r.inline_storage_, sizeof inline_storage_);
+    // span_ = base::make_span(inline_storage_, r.span_.size());
+    auto span = base::span(inline_storage_);
+    span.copy_from(base::span(r.inline_storage_));
+    span_ = span.first(r.span_.size());
   } else {
     span_ = r.span_;
   }

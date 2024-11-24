@@ -4,7 +4,7 @@
 
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
+// #pragma allow_unsafe_buffers
 #endif
 
 #include "third_party/blink/renderer/bindings/core/v8/script_decoder.h"
@@ -135,13 +135,12 @@ TEST_F(ScriptDecoderTest, PartiallySendDifferentThread) {
           TextResourceDecoderOptions::CreateUTF8Decode()),
       default_task_runner);
 
-  base::span<const char> data_span =
-      base::make_span(reinterpret_cast<const char*>(kFooUTF8WithBOM),
-                      sizeof(kFooUTF8WithBOM) / sizeof(unsigned char));
+  base::span data_span = base::make_span(
+      reinterpret_cast<
+          const char(&)[sizeof(kFooUTF8WithBOM) / sizeof(unsigned char)]>(
+          kFooUTF8WithBOM));
 
-  base::span<const char> first_chunk = base::make_span(data_span.begin(), 3u);
-  base::span<const char> second_chunk =
-      base::make_span(data_span.begin() + 3, data_span.end());
+  auto [first_chunk, second_chunk] = data_span.split_at(3u);
 
   // Directly send the first chunk to `client`.
   client->DidReceiveData(first_chunk);

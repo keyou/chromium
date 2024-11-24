@@ -5,6 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_V8_COMPILE_HINTS_CONSUMER_H_
 #define THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_V8_COMPILE_HINTS_CONSUMER_H_
 
+#include <cstdint>
+
 #include "third_party/blink/renderer/bindings/core/v8/v8_compile_hints_common.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -25,6 +27,7 @@ class CORE_EXPORT V8CrowdsourcedCompileHintsConsumer
 
   // Set the compile hints data based on raw memory containing int64_t:s.
   void SetData(const int64_t* memory, size_t int64_count);
+  void SetData(base::span<const int64_t> memory);
 
   static bool CompileHintCallback(int position,
                                   void* raw_data_and_script_name_hash);

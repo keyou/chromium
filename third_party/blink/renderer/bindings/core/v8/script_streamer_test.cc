@@ -4,7 +4,7 @@
 
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
+// #pragma allow_unsafe_buffers
 #endif
 
 #include "third_party/blink/renderer/bindings/core/v8/script_streamer.h"
@@ -1159,8 +1159,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, HasCodeCache) {
   V8TestingScope scope;
   Init(scope.GetIsolate());
   mojo_base::BigBuffer code_cache_data = CreateDummyCodeCacheData();
-  const std::vector<uint8_t> code_cache_data_copy(
-      code_cache_data.data(), code_cache_data.data() + code_cache_data.size());
+  const std::vector<uint8_t> code_cache_data_copy(code_cache_data.begin(),
+                                                  code_cache_data.end());
   RunInBackgroundThread(base::BindLambdaForTesting([&]() {
     network::mojom::URLResponseHeadPtr head = CreateURLResponseHead();
     // Set charset to make the code cache valid.
@@ -1199,8 +1199,8 @@ TEST_F(BackgroundResourceScriptStreamerCodeCacheDecodeStartTest, HasCodeCache) {
   V8TestingScope scope;
   Init(scope.GetIsolate());
   mojo_base::BigBuffer code_cache_data = CreateDummyCodeCacheData();
-  const std::vector<uint8_t> code_cache_data_copy(
-      code_cache_data.data(), code_cache_data.data() + code_cache_data.size());
+  const std::vector<uint8_t> code_cache_data_copy(code_cache_data.begin(),
+                                                  code_cache_data.end());
   RunInBackgroundThread(base::BindLambdaForTesting([&]() {
     network::mojom::URLResponseHeadPtr head = CreateURLResponseHead();
     // Set charset to make the code cache valid.
@@ -1222,8 +1222,8 @@ TEST_F(BackgroundResourceScriptStreamerCodeCacheDecodeStartTest, HasCodeCache) {
   background_response_processor_client_.WaitUntilFinished();
   // Checking that the code cache data is passed to the finish callback.
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/code_cache_data_copy);
   Finish();
   RunUntilResourceLoaded();
@@ -1238,8 +1238,8 @@ TEST_F(BackgroundResourceScriptStreamerCodeCacheDecodeStartTest,
   Init(scope.GetIsolate());
   mojo_base::BigBuffer code_cache_data = CreateDummyCodeCacheDataWithHash(
       base::span_from_cstring(kLargeEnoughScript));
-  const std::vector<uint8_t> code_cache_data_copy(
-      code_cache_data.data(), code_cache_data.data() + code_cache_data.size());
+  const std::vector<uint8_t> code_cache_data_copy(code_cache_data.begin(),
+                                                  code_cache_data.end());
   RunInBackgroundThread(base::BindLambdaForTesting([&]() {
     network::mojom::URLResponseHeadPtr head = CreateURLResponseHead();
     // Set charset to make the code cache valid.
@@ -1259,8 +1259,8 @@ TEST_F(BackgroundResourceScriptStreamerCodeCacheDecodeStartTest,
   background_response_processor_client_.WaitUntilFinished();
   // Checking that the code cache data is passed to the finish callback.
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/code_cache_data_copy);
   EXPECT_TRUE(resource_->HasBackgroundStreamerWithDecodedData());
   EXPECT_TRUE(resource_->HasBackgroundStreamerWithConsumeCodeCacheTask());
@@ -1277,8 +1277,8 @@ TEST_F(BackgroundResourceScriptStreamerCodeCacheDecodeStartTest,
   Init(scope.GetIsolate());
   mojo_base::BigBuffer code_cache_data = CreateDummyCodeCacheDataWithHash(
       base::span_from_cstring("not matching script"));
-  const std::vector<uint8_t> code_cache_data_copy(
-      code_cache_data.data(), code_cache_data.data() + code_cache_data.size());
+  const std::vector<uint8_t> code_cache_data_copy(code_cache_data.begin(),
+                                                  code_cache_data.end());
   RunInBackgroundThread(base::BindLambdaForTesting([&]() {
     network::mojom::URLResponseHeadPtr head = CreateURLResponseHead();
     // Set charset to make the code cache valid.
@@ -1298,8 +1298,8 @@ TEST_F(BackgroundResourceScriptStreamerCodeCacheDecodeStartTest,
   background_response_processor_client_.WaitUntilFinished();
   // Checking that the code cache data is passed to the finish callback.
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/code_cache_data_copy);
   EXPECT_TRUE(resource_->HasBackgroundStreamerWithDecodedData());
   // The cache consumption task was abandoned due to mismatching source hash.
@@ -1315,8 +1315,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, HasTimeStampData) {
   V8TestingScope scope;
   Init(scope.GetIsolate());
   mojo_base::BigBuffer time_stamp_data = CreateDummyTimeStampData();
-  const std::vector<uint8_t> time_stamp_data_copy(
-      time_stamp_data.data(), time_stamp_data.data() + time_stamp_data.size());
+  const std::vector<uint8_t> time_stamp_data_copy(time_stamp_data.begin(),
+                                                  time_stamp_data.end());
   RunInBackgroundThread(base::BindLambdaForTesting([&]() {
     network::mojom::URLResponseHeadPtr head = CreateURLResponseHead();
     // Set a dummy time stamp data.
@@ -1337,8 +1337,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, HasTimeStampData) {
   background_response_processor_client_.WaitUntilFinished();
   // Checking that the dummy time stamp data is passed to the finish callback.
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/time_stamp_data_copy);
   Finish();
   RunUntilResourceLoaded();
@@ -1370,8 +1370,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, InvalidCachedMetadata) {
   background_response_processor_client_.WaitUntilFinished();
   // Checking that the dummy metadata is passed to the finish callback.
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/kInvalidCachedMetadata);
   Finish();
   RunUntilResourceLoaded();
@@ -1398,8 +1398,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, SmallScript) {
   producer_handle_.reset();
   background_response_processor_client_.WaitUntilFinished();
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kTooSmallScript,
-                                        sizeof(kTooSmallScript) - 1),
+      /*expected_body=*/base::make_span(kTooSmallScript)
+          .first(sizeof(kTooSmallScript) - 1),
       /*expected_cached_metadata=*/std::nullopt);
   Finish();
   RunUntilResourceLoaded();
@@ -1429,8 +1429,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, SmallScriptInFirstChunk) {
   producer_handle_.reset();
   background_response_processor_client_.WaitUntilFinished();
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kTooSmallScript,
-                                        sizeof(kTooSmallScript) - 1),
+      /*expected_body=*/base::make_span(kTooSmallScript)
+          .first(sizeof(kTooSmallScript) - 1),
       /*expected_cached_metadata=*/std::nullopt);
   Finish();
   RunUntilResourceLoaded();
@@ -1511,8 +1511,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, EnoughData) {
   producer_handle_.reset();
   background_response_processor_client_.WaitUntilFinished();
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/std::nullopt);
   Finish();
   RunUntilResourceLoaded();
@@ -1541,8 +1541,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, EnoughDataInFirstChunk) {
   producer_handle_.reset();
   background_response_processor_client_.WaitUntilFinished();
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/std::nullopt);
   Finish();
   RunUntilResourceLoaded();
@@ -1569,8 +1569,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, EnoughDataModuleScript) {
   producer_handle_.reset();
   background_response_processor_client_.WaitUntilFinished();
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/std::nullopt);
   Finish();
   RunUntilResourceLoaded();
@@ -1599,8 +1599,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, EncodingNotSupported) {
   producer_handle_.reset();
   background_response_processor_client_.WaitUntilFinished();
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/std::nullopt);
   Finish();
   RunUntilResourceLoaded();
@@ -1630,8 +1630,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, EncodingFromBOM) {
   producer_handle_.reset();
   background_response_processor_client_.WaitUntilFinished();
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kScriptWithBOM,
-                                        sizeof(kScriptWithBOM) - 1),
+      /*expected_body=*/base::make_span(kScriptWithBOM)
+          .first(sizeof(kScriptWithBOM) - 1),
       /*expected_cached_metadata=*/std::nullopt);
   Finish();
   RunUntilResourceLoaded();
@@ -1658,8 +1658,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, ScriptTypeMismatch) {
   producer_handle_.reset();
   background_response_processor_client_.WaitUntilFinished();
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/std::nullopt);
   Finish();
   RunUntilResourceLoaded();
@@ -1748,8 +1748,8 @@ TEST_F(BackgroundResourceScriptStreamerTest, CompilingStreamedScript) {
   producer_handle_.reset();
   background_response_processor_client_.WaitUntilFinished();
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kLargeEnoughScript,
-                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_body=*/base::make_span(kLargeEnoughScript)
+          .first(sizeof(kLargeEnoughScript) - 1),
       /*expected_cached_metadata=*/std::nullopt);
   Finish();
   RunUntilResourceLoaded();
@@ -1793,8 +1793,8 @@ TEST_F(BackgroundResourceScriptStreamerTest,
   producer_handle_.reset();
   background_response_processor_client_.WaitUntilFinished();
   background_response_processor_client_.CheckResultOfFinishCallback(
-      /*expected_body=*/base::make_span(kInvalidScript,
-                                        sizeof(kInvalidScript) - 1),
+      /*expected_body=*/base::make_span(kInvalidScript)
+          .first(sizeof(kInvalidScript) - 1),
       /*expected_cached_metadata=*/std::nullopt);
   Finish();
   RunUntilResourceLoaded();
@@ -1910,7 +1910,8 @@ TEST_F(BackgroundResourceScriptStreamerTest,
       v8_compile_hints_consumer = MakeGarbageCollected<
           v8_compile_hints::V8CrowdsourcedCompileHintsConsumer>();
   Vector<int64_t> dummy_data(v8_compile_hints::kBloomFilterInt32Count / 2);
-  v8_compile_hints_consumer->SetData(dummy_data.data(), dummy_data.size());
+  // v8_compile_hints_consumer->SetData(dummy_data.data(), dummy_data.size());
+  v8_compile_hints_consumer->SetData(dummy_data);
 
   Init(scope.GetIsolate(), /*is_module_script=*/false, /*charset=*/std::nullopt,
        v8_compile_hints_consumer);

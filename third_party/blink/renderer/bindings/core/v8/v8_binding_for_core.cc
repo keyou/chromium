@@ -30,7 +30,7 @@
 
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
+// #pragma allow_unsafe_buffers
 #endif
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
@@ -534,8 +534,9 @@ static bool HasUnmatchedSurrogates(const String& string) {
   if (string.empty() || string.Is8Bit())
     return false;
 
-  const UChar* characters = string.Characters16();
-  const unsigned length = string.length();
+  // const UChar* characters = string.Characters16();
+  auto characters = string.Span16();
+  const unsigned length = characters.size();
 
   for (unsigned i = 0; i < length; ++i) {
     UChar c = characters[i];
@@ -569,7 +570,7 @@ String ReplaceUnmatchedSurrogates(String string) {
   DCHECK(!string.Is8Bit());
 
   // 1. Let S be the DOMString value.
-  const UChar* s = string.Characters16();
+  const auto s = string.Span16();
 
   // 2. Let n be the length of S.
   const unsigned n = string.length();
@@ -579,7 +580,7 @@ String ReplaceUnmatchedSurrogates(String string) {
 
   // 4. Initialize U to be an empty sequence of Unicode characters.
   StringBuffer<UChar> result(n);
-  UChar* u = result.Characters();
+  auto u = result.Span();
 
   // 5. While i < n:
   while (i < n) {
@@ -801,34 +802,35 @@ ScriptState* ToScriptStateForMainWorld(ExecutionContext* context) {
                        DOMWrapperWorld::MainWorld(context->GetIsolate()));
 }
 
-bool IsValidEnum(const String& value,
-                 const char* const* valid_values,
-                 size_t length,
-                 const String& enum_name,
-                 ExceptionState& exception_state) {
-  for (size_t i = 0; i < length; ++i) {
-    // Avoid the strlen inside String::operator== (because of the StringView).
-    if (WTF::EqualToCString(value.Impl(), valid_values[i])) {
-      return true;
-    }
-  }
-  exception_state.ThrowTypeError("The provided value '" + value +
-                                 "' is not a valid enum value of type " +
-                                 enum_name + ".");
-  return false;
-}
+// bool IsValidEnum(const String& value,
+//                  const char* const* valid_values,
+//                  size_t length,
+//                  const String& enum_name,
+//                  ExceptionState& exception_state) {
+//   for (size_t i = 0; i < length; ++i) {
+//     // Avoid the strlen inside String::operator== (because of the
+//     StringView). if (WTF::EqualToCString(value.Impl(), valid_values[i])) {
+//       return true;
+//     }
+//   }
+//   exception_state.ThrowTypeError("The provided value '" + value +
+//                                  "' is not a valid enum value of type " +
+//                                  enum_name + ".");
+//   return false;
+// }
 
-bool IsValidEnum(const Vector<String>& values,
-                 const char* const* valid_values,
-                 size_t length,
-                 const String& enum_name,
-                 ExceptionState& exception_state) {
-  for (auto value : values) {
-    if (!IsValidEnum(value, valid_values, length, enum_name, exception_state))
-      return false;
-  }
-  return true;
-}
+// bool IsValidEnum(const Vector<String>& values,
+//                  const char* const* valid_values,
+//                  size_t length,
+//                  const String& enum_name,
+//                  ExceptionState& exception_state) {
+//   for (auto value : values) {
+//     if (!IsValidEnum(value, valid_values, length, enum_name,
+//     exception_state))
+//       return false;
+//   }
+//   return true;
+// }
 
 v8::Local<v8::Function> GetEsIteratorMethod(v8::Isolate* isolate,
                                             v8::Local<v8::Object> object,
