@@ -849,6 +849,16 @@ SharedImageBackingFactory* SharedImageFactory::GetFactoryByUsage(
     if (factory->CanCreateSharedImage(SharedImageUsageSet(usage), format, size,
                                       share_between_threads, gmb_type,
                                       gr_context_type_, pixel_data)) {
+      if (size == gfx::Size(640, 640)) {
+        LOG(ERROR) << "keyou: factory:" << ", usage:" << usage
+                   << ", CONCURRENT_READ_WRITE:"
+                   << (usage & gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE)
+                   << ", SCANOUT:" << (usage & gpu::SHARED_IMAGE_USAGE_SCANOUT)
+                   << ", format:" << format.ToString()
+                   << ", size:" << size.ToString()
+                   << ", gr_context_type_:" << (int)gr_context_type_
+                   << ", gmb_type:" << gmb_type;
+      }
       return factory.get();
     }
   }
@@ -874,7 +884,9 @@ bool SharedImageFactory::RegisterBacking(
     LOG(ERROR) << "CreateSharedImage: could not create backing.";
     return false;
   }
-
+  if (backing->size() == gfx::Size(640, 640)) {
+    LOG(ERROR) << "keyou: RegisterBacking: " << backing->GetName();
+  }
   std::unique_ptr<SharedImageRepresentationFactoryRef> shared_image =
       shared_image_manager_->Register(std::move(backing),
                                       memory_tracker_.get());

@@ -206,7 +206,8 @@ OffscreenCanvasRenderingContext2D::ProduceCanvasResource(FlushReason reason) {
 bool OffscreenCanvasRenderingContext2D::PushFrame() {
   if (dirty_rect_for_commit_.isEmpty())
     return false;
-
+  TRACE_EVENT("loading", "OffscreenCanvasRenderingContext2D::PushFrameKY");
+  LOG(ERROR) << "keyou: PushFrame";
   SkIRect damage_rect(dirty_rect_for_commit_);
   FinalizeFrame(FlushReason::kOffscreenCanvasPushFrame);
   bool ret = Host()->PushFrame(

@@ -488,6 +488,9 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
       return nullptr;
     }
     scoped_refptr<CanvasResource> resource = resource_;
+    LOG(ERROR) << "keyou: ProduceCanvasResource: canvas:" << resource_.get()
+               << ", HasOneRef:" << resource_->HasOneRef()
+               << ", HasAtLeastOneRef:" << resource_->HasAtLeastOneRef();
     if (ContextProviderWrapper()
             ->ContextProvider()
             .GetCapabilities()
@@ -559,6 +562,10 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
     // token for these writes.
     cached_snapshot_.reset();
 
+    LOG(ERROR) << "keyou: resource_->HasOneRef():" << resource_->HasOneRef()
+               << ", HasAtLeastOneRef:" << resource_->HasAtLeastOneRef()
+               << ", IsResourceUsable:" << IsResourceUsable(resource_.get())
+               << ", resource:" << resource_.get();
     // Determine if a copy is needed for accelerated resources. This could be
     // for one of two reasons: (1) copy-on-write is required, or (2) the
     // SharedImage usages with which this provider should create resources has
@@ -596,7 +603,10 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
         auto old_mailbox =
             old_resource_shared_image->GetClientSharedImage()->mailbox();
         auto mailbox = resource()->GetClientSharedImage()->mailbox();
-
+        LOG(ERROR) << "keyou: CopySharedImage: old_mailbox:"
+                   << old_mailbox.ToDebugString()
+                   << ", new_mailbox:" << mailbox.ToDebugString()
+                   << ", size:" << Size().ToString();
         RasterInterface()->CopySharedImage(old_mailbox, mailbox, 0, 0, 0, 0,
                                            Size().width(), Size().height());
       } else if (use_oop_rasterization_) {
@@ -1601,6 +1611,7 @@ void CanvasResourceProvider::EnsureSkiaCanvas() {
            ->ContextProvider()
            .GetGpuFeatureInfo()
            .IsWorkaroundEnabled(gpu::DISABLE_2D_CANVAS_AUTO_FLUSH)) {
+    LOG(ERROR) << "keyou: EnsureSkiaCanvas: context_flushes.enable 50";
     context_flushes.enable = true;
     context_flushes.max_draws_before_flush = kMaxDrawsBeforeContextFlush;
   }

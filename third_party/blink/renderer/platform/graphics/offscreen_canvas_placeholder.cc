@@ -91,6 +91,10 @@ void OffscreenCanvasPlaceholder::SetOffscreenCanvasResource(
   // CanvasResourceDispatcher, via FrameLastUnrefCallback if it was
   // the last outstanding reference on this thread.
   placeholder_frame_ = std::move(new_frame);
+  LOG(ERROR) << "keyou: SetOffscreenCanvasResource: canvas:"
+             << placeholder_frame_.get()
+             << ", HasOneRef:" << placeholder_frame_->HasOneRef()
+             << ", HasAtLeastOneRef:" << placeholder_frame_->HasAtLeastOneRef();
   placeholder_frame_->SetLastUnrefCallback(
       base::BindOnce(FrameLastUnrefCallback, frame_dispatcher_,
                      frame_dispatcher_task_runner_, resource_id));

@@ -121,6 +121,8 @@ void DisplayCALayerTree::UpdateCALayerTree(
 }
 
 void DisplayCALayerTree::GotCALayerFrame(uint32_t ca_context_id) {
+  LOG(ERROR) << "keyou: GotCALayerFrame: ca_context_id:" << ca_context_id
+             << ", old:" << remote_layer_.contextId;
   // Early-out if the remote layer has not changed.
   if (remote_layer_.contextId == ca_context_id) {
     return;

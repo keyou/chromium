@@ -437,6 +437,20 @@ CanvasResourceSharedImage::CanvasResourceSharedImage(
       return;
     }
   } else {
+    LOG(ERROR) << "keyou: canvas::ctor:" << this
+               << ", is_accelerated:" << is_accelerated_
+               << ", use_oop_rasterization_: " << use_oop_rasterization_
+               << ", shared_image_usage_flags:" << shared_image_usage_flags
+               << ", CONCURRENT_READ_WRITE:"
+               << (shared_image_usage_flags &
+                   gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE)
+               << ", SCANOUT:"
+               << (shared_image_usage_flags & gpu::SHARED_IMAGE_USAGE_SCANOUT)
+               << ", size:" << size.ToString()
+               << ", format:" << format.ToString()
+               << ", shared:" << SharedGpuContext::GetGpuMemoryBufferManager()
+               << ", plat:" << Platform::Current()->GetGpuMemoryBufferManager();
+
     client_shared_image = shared_image_interface->CreateSharedImage(
         {format, size, color_space, kTopLeft_GrSurfaceOrigin, alpha_type,
          gpu::SharedImageUsageSet(shared_image_usage_flags),

@@ -10,10 +10,16 @@
 #include "ui/accelerated_widget_mac/ca_renderer_layer_tree.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <Cocoa/Cocoa.h>
+#import <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
+#import <CoreGraphics/CoreGraphics.h>
 #include <CoreMedia/CoreMedia.h>
 #include <CoreVideo/CoreVideo.h>
+#import <Foundation/Foundation.h>
 #include <GLES2/gl2extchromium.h>
+#import <IOSurface/IOSurface.h>
+#import <ImageIO/ImageIO.h>
 
 #include <utility>
 
@@ -1086,6 +1092,48 @@ void CARendererLayerTree::TransformLayer::CommitToCA(
   }
 }
 
+void exportLayerAsImage(CALayer* layer, const std::string& filePath) {
+  // 计算图层的大小
+  NSRect layerBounds = layer.bounds;
+
+  // 创建一个图形上下文
+  NSBitmapImageRep* bitmapRep = [[NSBitmapImageRep alloc]
+      initWithBitmapDataPlanes:NULL
+                    pixelsWide:layerBounds.size.width
+                    pixelsHigh:layerBounds.size.height
+                 bitsPerSample:8
+               samplesPerPixel:4
+                      hasAlpha:YES
+                      isPlanar:NO
+                colorSpaceName:NSCalibratedRGBColorSpace
+                   bytesPerRow:0
+                  bitsPerPixel:0];
+
+  // 创建一个 NSGraphicsContext
+  NSGraphicsContext* context =
+      [NSGraphicsContext graphicsContextWithBitmapImageRep:bitmapRep];
+  [NSGraphicsContext saveGraphicsState];
+  [NSGraphicsContext setCurrentContext:context];
+
+  // 渲染图层
+  [layer renderInContext:context.CGContext];
+
+  [NSGraphicsContext restoreGraphicsState];
+
+  // 将图像数据转换为 PNG 数据
+  NSData* pngData = [bitmapRep representationUsingType:NSBitmapImageFileTypePNG
+                                            properties:@{}];
+
+  // 保存 PNG 数据到文件
+  if ([pngData writeToFile:[NSString stringWithUTF8String:filePath.c_str()]
+                atomically:YES]) {
+    LOG(ERROR) << "keyou: 图像已成功导出到:"
+               << [NSString stringWithUTF8String:filePath.c_str()];
+  } else {
+    LOG(ERROR) << "keyou: 导出图像时出错";
+  }
+}
+
 void CARendererLayerTree::ContentLayer::CommitToCA(
     CALayer* last_committed_ca_layer) {
   CALayer* superlayer = parent_layer_->ca_layer_;
@@ -1237,6 +1285,11 @@ void CARendererLayerTree::ContentLayer::CommitToCA(
   if (update_ca_filter) {
     ca_layer_.magnificationFilter = ca_filter_;
     ca_layer_.minificationFilter = ca_filter_;
+  }
+  if (type_ == CALayerType::kDefault && ca_layer_.bounds.size.width == 320 &&
+      ca_layer_.bounds.size.height == 320) {
+    LOG(ERROR) << "keyou: exportLayerAsImage2";
+    exportLayerAsImage(ca_layer_, "./aaa_ca-layer2.png");
   }
 
 #if BUILDFLAG(IS_MAC)

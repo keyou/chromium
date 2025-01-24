@@ -301,9 +301,9 @@ bool IOSurfaceImageBackingFactory::IsSupported(
   // IOSurfaceImageBacking::GLTextureImageRepresentationEndAccess().
   if (gl::GetANGLEImplementation() == gl::ANGLEImplementation::kSwiftShader ||
       gl::GetANGLEImplementation() == gl::ANGLEImplementation::kMetal) {
-    if (usage.Has(SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE)) {
-      return false;
-    }
+    // if (usage.Has(SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE)) {
+    //   return false;
+    // }
   }
 
   return true;

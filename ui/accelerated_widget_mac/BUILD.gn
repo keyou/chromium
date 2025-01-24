@@ -31,6 +31,7 @@ component("accelerated_widget_mac") {
     "CoreVideo.framework",
     "IOSurface.framework",
     "QuartzCore.framework",
+    "Cocoa.framework",
   ]
 
   if (is_ios) {

@@ -907,6 +907,8 @@ bool Display::DrawAndSwap(const DrawAndSwapParams& params) {
         current_surface_id_, params.expected_display_time,
         current_display_transform, target_damage_bounding_rect,
         swapped_trace_id_);
+    TRACE_EVENT("loading", "frameKY", "frame", frame.ToString(),
+                "render_pass_size", frame.render_pass_list.size());
   }
   DebugDrawFrame(frame, resource_provider_);
 

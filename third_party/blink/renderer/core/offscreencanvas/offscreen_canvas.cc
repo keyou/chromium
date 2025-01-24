@@ -498,6 +498,8 @@ CanvasResourceDispatcher* OffscreenCanvas::GetOrCreateResourceDispatcher() {
     if (auto* top_execution_context = GetTopExecutionContext()) {
       agent_group_scheduler_compositor_task_runner =
           top_execution_context->GetAgentGroupSchedulerCompositorTaskRunner();
+      LOG(ERROR) << "keyou: GetAgentGroupSchedulerCompositorTaskRunner:"
+                 << !!agent_group_scheduler_compositor_task_runner;
 
       // AgentGroupSchedulerCompositorTaskRunner will be null for
       // SharedWorkers, but for windows and other workers it should be non-null.
@@ -536,6 +538,7 @@ CanvasResourceProvider* OffscreenCanvas::GetOrCreateResourceProvider() {
         RuntimeEnabledFeatures::Accelerated2dCanvasEnabled() &&
         !(context_->CreationAttributes().will_read_frequently ==
           CanvasContextCreationAttributesCore::WillReadFrequently::kTrue)));
+#if 1
   const bool use_shared_image =
       can_use_gpu ||
       (HasPlaceholderCanvas() && SharedGpuContext::IsGpuCompositingEnabled());
@@ -551,6 +554,7 @@ CanvasResourceProvider* OffscreenCanvas::GetOrCreateResourceProvider() {
       gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
   if (use_scanout) {
     shared_image_usage_flags |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
+    shared_image_usage_flags |= gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE;
   }
 
   const SkAlphaType alpha_type = GetRenderingContextAlphaType();
@@ -572,7 +576,50 @@ CanvasResourceProvider* OffscreenCanvas::GetOrCreateResourceProvider() {
         CanvasResourceProvider::ShouldInitialize::kCallClear,
         SharedGpuContext::SharedImageInterfaceProvider(), this);
   }
+#else
+  const bool composited_mode =
+      IsWebGPU() ||
+      (IsWebGL() && RuntimeEnabledFeatures::WebGLImageChromiumEnabled()) ||
+      (IsRenderingContext2D() &&
+       RuntimeEnabledFeatures::Canvas2dImageChromiumEnabled());
 
+  gpu::SharedImageUsageSet shared_image_usage_flags =
+      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
+  if (composited_mode && HasPlaceholderCanvas()) {
+    shared_image_usage_flags |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
+  }
+
+  const SkAlphaType alpha_type = GetRenderingContextAlphaType();
+  const SkColorType sk_color_type = GetRenderingContextSkColorType();
+  const sk_sp<SkColorSpace> sk_color_space = GetRenderingContextSkColorSpace();
+  if (can_use_gpu) {
+    provider = CanvasResourceProvider::CreateSharedImageProvider(
+        Size(), sk_color_type, alpha_type, sk_color_space,
+        CanvasResourceProvider::ShouldInitialize::kCallClear,
+        SharedGpuContext::ContextProviderWrapper(), RasterMode::kGPU,
+        shared_image_usage_flags, this);
+  } else if (HasPlaceholderCanvas() && composited_mode) {
+    // Only try a SoftwareComposited SharedImage if the context has Placeholder
+    // canvas and the composited mode is enabled.
+    provider = CanvasResourceProvider::CreateSharedImageProvider(
+        Size(), sk_color_type, alpha_type, sk_color_space,
+        CanvasResourceProvider::ShouldInitialize::kCallClear,
+        SharedGpuContext::ContextProviderWrapper(), RasterMode::kCPU,
+        shared_image_usage_flags, this);
+  }
+
+  if (!provider && HasPlaceholderCanvas()) {
+    // If this context has a Placerholder - which means that we have to display
+    // this resource - and the SharedImage Provider creation above failed, we
+    // try a SharedBitmap Provider before falling back to a Bitmap Provider.
+    base::WeakPtr<CanvasResourceDispatcher> dispatcher_weakptr =
+        GetOrCreateResourceDispatcher()->GetWeakPtr();
+    provider = CanvasResourceProvider::CreateSharedBitmapProvider(
+        Size(), sk_color_type, alpha_type, sk_color_space,
+        CanvasResourceProvider::ShouldInitialize::kCallClear,
+        SharedGpuContext::SharedImageInterfaceProvider(), this);
+  }
+#endif
   if (!provider) {
     // Last resort fallback is to use the bitmap provider. Using this
     // path is normal for software-rendered OffscreenCanvases that have no
@@ -630,8 +677,11 @@ bool OffscreenCanvas::PushFrame(scoped_refptr<CanvasResource>&& canvas_resource,
   DCHECK(needs_push_frame_);
   needs_push_frame_ = false;
   current_frame_damage_rect_.join(damage_rect);
-  if (current_frame_damage_rect_.isEmpty() || !canvas_resource)
+  if (current_frame_damage_rect_.isEmpty() || !canvas_resource) {
+    LOG(ERROR) << "keyou: current_frame_damage_rect_:"
+               << current_frame_damage_rect_.isEmpty();
     return false;
+  }
   const base::TimeTicks commit_start_time = base::TimeTicks::Now();
   GetOrCreateResourceDispatcher()->DispatchFrame(
       std::move(canvas_resource), commit_start_time, current_frame_damage_rect_,

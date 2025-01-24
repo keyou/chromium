@@ -233,6 +233,7 @@ SkiaOutputDeviceBufferQueue::~SkiaOutputDeviceBufferQueue() {
     }
   }
 }
+static gpu::Mailbox g_mailbox = {};
 
 const SkiaOutputDeviceBufferQueue::OverlayData*
 SkiaOutputDeviceBufferQueue::GetOrCreateOverlayData(const gpu::Mailbox& mailbox,
@@ -245,6 +246,12 @@ SkiaOutputDeviceBufferQueue::GetOrCreateOverlayData(const gpu::Mailbox& mailbox,
     return nullptr;
   }
 
+  if (g_mailbox == mailbox) {
+    LOG(ERROR) << "keyou: GetOrCreateOverlayData: mailbox:"
+               << mailbox.ToDebugString();
+    g_mailbox = mailbox;
+  }
+
   auto it = overlays_.find(mailbox);
   if (it != overlays_.end()) {
     // If the overlay is in |overlays_|, we will reuse it, and a ref will be
@@ -252,6 +259,12 @@ SkiaOutputDeviceBufferQueue::GetOrCreateOverlayData(const gpu::Mailbox& mailbox,
     // replaced by a new frame.
     it->Ref();
     it->OnReuse();
+    if (g_mailbox == mailbox) {
+      LOG(ERROR) << "keyou: GetOrCreateOverlayData: reuse overlay data: "
+                 << mailbox.ToDebugString();
+      g_mailbox = mailbox;
+    }
+
     if (is_existing)
       *is_existing = true;
     return &*it;
@@ -263,6 +276,11 @@ SkiaOutputDeviceBufferQueue::GetOrCreateOverlayData(const gpu::Mailbox& mailbox,
   if (!shared_image) {
     LOG(ERROR) << "Invalid mailbox.";
     return nullptr;
+  }
+
+  if (shared_image->size() == gfx::Size(640, 640)) {
+    LOG(ERROR) << "keyou: ProduceOverlay: mailbox:" << mailbox.ToDebugString();
+    g_mailbox = mailbox;
   }
 
   auto shared_image_access = shared_image->BeginScopedReadAccess();
@@ -354,6 +372,10 @@ void SkiaOutputDeviceBufferQueue::DoFinishSwapBuffers(
     auto it = overlays_.find(mailbox);
     CHECK(it != overlays_.end(), base::NotFatalUntil::M130);
     it->Unref();
+    if (g_mailbox == mailbox) {
+      LOG(ERROR) << "keyou: overlay mailbox release:"
+                 << mailbox.ToDebugString();
+    }
   }
 
   bool need_gl_context = false;
@@ -380,6 +402,13 @@ void SkiaOutputDeviceBufferQueue::DoFinishSwapBuffers(
   // not used.
   std::erase_if(overlays_, [&result, &has_in_use_overlays,
                             &released_overlays](auto& overlay) {
+    if (g_mailbox == overlay.mailbox()) {
+      LOG(ERROR) << "keyou: try erase mailbox:"
+                 << overlay.mailbox().ToDebugString()
+                 << ", overlay.unique:" << overlay.unique()
+                 << ", overlay.IsInUseByWindowServer():"
+                 << overlay.IsInUseByWindowServer();
+    }
     if (!overlay.unique()) {
       return false;
     }
@@ -406,6 +435,9 @@ void SkiaOutputDeviceBufferQueue::DoFinishSwapBuffers(
     if (!result.release_fence.is_null()) {
       overlay.scoped_read_access()->SetReleaseFence(
           result.release_fence.Clone());
+    }
+    if (g_mailbox == overlay.mailbox()) {
+      LOG(ERROR) << "keyou: erase success";
     }
     return true;
   });

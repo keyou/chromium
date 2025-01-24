@@ -144,9 +144,21 @@ ImageContextImpl::ImageContextImpl(
     : ImageContext(mailbox_holder, size, format, ycbcr_info, color_space),
       maybe_concurrent_reads_(maybe_concurrent_reads),
       is_for_render_pass_(is_for_render_pass),
-      raw_draw_if_possible_(raw_draw_if_possible) {}
+      raw_draw_if_possible_(raw_draw_if_possible) {
+  if (size == gfx::Size(640, 640)) {
+    LOG(ERROR) << "keyou: ImageContext::ctor: this:" << this
+               << ", size:" << size.ToString()
+               << ", is_for_render_pass: " << is_for_render_pass_
+               << ", mailbox:" << mailbox_holder.mailbox.ToDebugString();
+  }
+}
 
 ImageContextImpl::~ImageContextImpl() {
+  if (size() == gfx::Size(640, 640)) {
+    LOG(ERROR) << "keyou: ImageContext::dtor: this:" << this
+               << ", size:" << size().ToString()
+               << ", mailbox:" << mailbox_holder().mailbox.ToDebugString();
+  }
   DeleteFallbackTextures();
 }
 
@@ -317,6 +329,10 @@ void ImageContextImpl::BeginAccessIfNecessary(
     gpu::SharedImageRepresentationFactory* representation_factory,
     std::vector<GrBackendSemaphore>* begin_semaphores,
     std::vector<GrBackendSemaphore>* end_semaphores) {
+  if (size() == gfx::Size(640, 640)) {
+    LOG(ERROR) << "keyou: ImageContext::BeginAccess: " << "size:"
+               << size().ToString();
+  }
   if (representation_raster_scoped_access_)
     return;
 

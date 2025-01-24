@@ -9,7 +9,12 @@
 
 #include "gpu/command_buffer/service/shared_image/iosurface_image_backing.h"
 
+#import <CoreFoundation/CoreFoundation.h>
+#import <CoreGraphics/CoreGraphics.h>
 #include <EGL/egl.h>
+#import <Foundation/Foundation.h>
+#import <IOSurface/IOSurface.h>
+#import <ImageIO/ImageIO.h>
 #import <Metal/Metal.h>
 #include <dawn/native/MetalBackend.h>
 
@@ -498,7 +503,8 @@ void IOSurfaceImageBacking::SkiaGaneshRepresentation::EndReadAccess() {
 
 bool IOSurfaceImageBacking::SkiaGaneshRepresentation::
     SupportsMultipleConcurrentReadAccess() {
-  return true;
+  // return true;
+  return false;
 }
 
 void IOSurfaceImageBacking::SkiaGaneshRepresentation::CheckContext() {
@@ -698,7 +704,13 @@ bool IOSurfaceImageBacking::OverlayRepresentation::IsInUseByWindowServer()
     return false;
   }
 
-  return IOSurfaceIsInUse(io_surface_.get());
+  bool result = IOSurfaceIsInUse(io_surface_.get());
+  if (backing()->size() == gfx::Size(640, 640)) {
+    LOG(ERROR) << "keyou: IOSurfaceIsInUse:" << result
+               << ", mailbox:" << backing()->mailbox().ToDebugString();
+    return false;
+  }
+  return result;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -754,6 +766,10 @@ wgpu::Texture IOSurfaceImageBacking::DawnRepresentation::BeginAccess(
   const bool readonly = (wgpu_texture_usage & ~kReadOnlyUsage) == 0 &&
                         (internal_usage & ~kReadOnlyUsage) == 0;
 
+  if (size() == gfx::Size(640, 640)) {
+    LOG(ERROR) << "keyou: DawnRepresentation::BeginAccess: mailbox:"
+               << mailbox().ToDebugString();
+  }
   IOSurfaceImageBacking* iosurface_backing =
       static_cast<IOSurfaceImageBacking*>(backing());
   if (!iosurface_backing->BeginAccess(readonly)) {
@@ -859,6 +875,10 @@ void IOSurfaceImageBacking::DawnRepresentation::EndAccess() {
     // been made, in which case we already executed the below code on the first
     // call (resulting in setting `texture_` to null).
     return;
+  }
+  if (size() == gfx::Size(640, 640)) {
+    LOG(ERROR) << "keyou: DawnRepresentation::EndAccess: mailbox:"
+               << mailbox().ToDebugString();
   }
 
   // Inform the backing that an access has ended so that it can properly update
@@ -994,7 +1014,14 @@ IOSurfaceImageBacking::IOSurfaceImageBacking(
       gr_context_type_(gr_context_type),
       weak_factory_(this) {
   CHECK(io_surface_);
-
+  if (size.width() == 640 && size.height() == 640) {
+    LOG(ERROR) << "keyou: IOSurfaceImageBacking: usage:" << usage
+               << ", CONCURRENT_READ_WRITE:"
+               << (usage & gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE)
+               << ", SCANOUT:" << (usage & gpu::SHARED_IMAGE_USAGE_SCANOUT)
+               << ", format:" << format.ToString()
+               << ", mailbox:" << mailbox.ToDebugString();
+  }
   // If this will be bound to different GL backends, then make RetainGLTexture
   // and ReleaseGLTexture actually create and destroy the texture.
   // https://crbug.com/1251724
@@ -1332,6 +1359,8 @@ std::unique_ptr<DawnImageRepresentation> IOSurfaceImageBacking::ProduceDawn(
     wgpu::BackendType backend_type,
     std::vector<wgpu::TextureFormat> view_formats,
     scoped_refptr<SharedContextState> context_state) {
+  LOG(ERROR) << "keyou: IOSurfaceImageBacking::ProduceDawn: backend_type:"
+             << (int)backend_type;
   wgpu::TextureFormat wgpu_format = ToDawnFormat(format());
   // See comments in IOSurfaceImageBackingFactory::CreateSharedImage about
   // RGBA versus BGRA when using Skia Ganesh GL backend or ANGLE.
@@ -1553,8 +1582,56 @@ bool IOSurfaceImageBacking::BeginAccess(bool readonly) {
   } else {
     ongoing_write_access_ = true;
   }
-
+  if (size() == gfx::Size(640, 640)) {
+    LOG(ERROR) << "keyou: num_ongoing_read_accesses_++="
+               << num_ongoing_read_accesses_ << ", readonly:" << readonly;
+  }
   return true;
+}
+
+void exportIOSurfaceToImageFile(IOSurfaceRef ioSurface, NSString* filePath) {
+  // 获取 IOSurface 的宽度和高度
+  size_t width = IOSurfaceGetWidth(ioSurface);
+  size_t height = IOSurfaceGetHeight(ioSurface);
+
+  // 创建一个 CGContext
+  CGContextRef context = CGBitmapContextCreate(
+      IOSurfaceGetBaseAddress(ioSurface), width, height,
+      8,  // 每个颜色通道的位数
+      IOSurfaceGetBytesPerRow(ioSurface), CGColorSpaceCreateDeviceRGB(),
+      kCGImageAlphaPremultipliedLast);
+
+  if (!context) {
+    NSLog(@"无法创建 CGContext");
+    return;
+  }
+
+  // 创建 CGImage
+  CGImageRef image = CGBitmapContextCreateImage(context);
+  CGContextRelease(context);  // 释放 CGContext
+
+  if (!image) {
+    NSLog(@"无法创建 CGImage");
+    return;
+  }
+
+  // 将 CGImage 写入文件
+  NSURL* url = [NSURL fileURLWithPath:filePath];
+  CGImageDestinationRef destination = CGImageDestinationCreateWithURL(
+      (__bridge CFURLRef)url, kUTTypePNG, 1, NULL);
+
+  if (destination) {
+    CGImageDestinationAddImage(destination, image, NULL);
+    if (!CGImageDestinationFinalize(destination)) {
+      LOG(ERROR) << "无法写入图片文件";
+    }
+    CFRelease(destination);
+  } else {
+    LOG(ERROR) << "无法创建图像目标";
+  }
+
+  CGImageRelease(image);  // 释放 CGImage
+  LOG(ERROR) << "keyou: export iosurface to:" << filePath.UTF8String;
 }
 
 void IOSurfaceImageBacking::EndAccess(bool readonly) {
@@ -1570,6 +1647,13 @@ void IOSurfaceImageBacking::EndAccess(bool readonly) {
       CHECK_EQ(num_ongoing_read_accesses_, 0u);
     }
     ongoing_write_access_ = false;
+  }
+  if (size() == gfx::Size(640, 640)) {
+    LOG(ERROR) << "keyou: num_ongoing_read_accesses_--="
+               << num_ongoing_read_accesses_ << ", readonly:" << readonly;
+    // 导出 IOSurface 为图片
+    NSString* filePath = @"./aaaa_io-surface2.png";  // 替换为实际路径
+    exportIOSurfaceToImageFile(io_surface_.get(), filePath);
   }
 }
 

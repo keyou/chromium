@@ -470,6 +470,9 @@ void SkiaPaintCanvas::drawPicture(
 }
 
 void SkiaPaintCanvas::FlushAfterDrawIfNeeded() {
+  TRACE_EVENT("loading", "SkiaPaintCanvas::FlushAfterDrawIfNeededKY",
+              "context_flushes_.enable", context_flushes_.enable, "num_of_ops_",
+              num_of_ops_);
   if (!context_flushes_.enable)
     return;
 

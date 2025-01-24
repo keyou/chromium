@@ -424,6 +424,8 @@ void DirectRenderer::DrawFrame(
   if (needs_full_frame_redraw)
     current_frame()->root_damage_rect = gfx::Rect(device_viewport_size);
 
+  TRACE_EVENT("loading", "skip_drawing_root_render_passKY",
+              "skip_drawing_root_render_pass", skip_drawing_root_render_pass);
   if (!skip_drawing_root_render_pass) {
     DrawRenderPassAndExecuteCopyRequests(root_render_pass);
   }

@@ -148,10 +148,16 @@ void CanvasResourceDispatcher::PostImageToPlaceholderIfNotBlocked(
   // Determines whether the main thread may be blocked. If unblocked, post
   // |canvas_resource|. Otherwise, save it but do not post it.
   if (num_unreclaimed_frames_posted_ < kMaxUnreclaimedPlaceholderFrames) {
+    LOG(ERROR) << "keyou: num_unreclaimed_frames_posted_:"
+               << num_unreclaimed_frames_posted_ + 1;
     PostImageToPlaceholder(std::move(canvas_resource), resource_id);
     num_unreclaimed_frames_posted_++;
   } else {
     DCHECK(num_unreclaimed_frames_posted_ == kMaxUnreclaimedPlaceholderFrames);
+    LOG(ERROR) << "keyou: NOT PostImageToPlaceholder: canvas:"
+               << canvas_resource.get()
+               << ", HasOneRef:" << canvas_resource->HasOneRef()
+               << ", HasAtLeastOneRef:" << canvas_resource->HasAtLeastOneRef();
     if (latest_unposted_image_) {
       // The previous unposted resource becomes obsolete now.
       ReclaimResourceInternal(latest_unposted_resource_id_,
@@ -169,6 +175,12 @@ void CanvasResourceDispatcher::PostImageToPlaceholder(
   // After this point, |canvas_resource| can only be used on the main thread,
   // until it is returned.
   canvas_resource->Transfer();
+  LOG(ERROR) << "keyou: PostImageToPlaceholder: canvas:"
+             << canvas_resource.get()
+             << ", HasOneRef:" << canvas_resource->HasOneRef()
+             << ", HasAtLeastOneRef:" << canvas_resource->HasAtLeastOneRef()
+             << ", agent_group_scheduler_compositor_task_runner_:"
+             << !!agent_group_scheduler_compositor_task_runner_;
 
   // `agent_group_scheduler_compositor_task_runner_` may be null if this
   // was created from a SharedWorker.
