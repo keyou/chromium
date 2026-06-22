@@ -1,0 +1,16 @@
+// Copyright 2026 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+CANVAS_DIMENSIONS, 20,
+FILL_RULE_NONZERO,
+PATH_COLOR_ARGB, 0xFF, 0x00, 0x00, 0x00,
+MOVE_TO, 5, 2.8,
+LINE_TO, 15.8, 10.7,
+LINE_TO, 11.4, 11.5,
+LINE_TO, 14, 16.9,
+LINE_TO, 11.6, 18,
+LINE_TO, 9, 12.8,
+LINE_TO, 6.2, 15.6,
+LINE_TO, 5, 2.8,
+CLOSE,

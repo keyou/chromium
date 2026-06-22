@@ -808,7 +808,7 @@ TEST_F(OmniboxEditModelPopupTest,
     std::u16string input_text;
     std::u16string expected_label;
   } test_cases[] = {
-      {0, u"@gemini", u"@gemini, Ask Gemini"},
+      {0, u"@gemini", u"@gemini, Aha BUA Pilot"},
       {1, u"@sitesearch", u"@sitesearch, Search SiteSearch"},
       {2, u"sitesearch", u"Search SiteSearch"},
   };

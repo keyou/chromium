@@ -329,7 +329,7 @@ TEST_F(TabStripActionContainerTest, MAYBE(GlicButtonHideNudgeOnTabChange)) {
   SimulateActiveTabChanged();
   ASSERT_FALSE(tab_strip_action_container_->GetIsShowingGlicNudge());
   ASSERT_EQ(tab_strip_action_container_->GetGlicButton()->GetText(),
-            u"Ask Gemini");
+            u"Aha BUA Pilot");
 }
 
 TEST_F(TabStripActionContainerTest, GlicAnchoredMessageHideNudgeOnTabChange) {

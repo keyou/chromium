@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "base/check.h"
+#include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/types/expected.h"
 #include "chrome/browser/glic/common/future_browser_features.h"
@@ -25,6 +26,7 @@
 #include "chrome/browser/glic/public/glic_enabling.h"
 #include "chrome/browser/page_content_annotations/multi_source_page_context_fetcher.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/optimization_guide/content/browser/page_content_image_extractor.h"
 #include "components/prefs/pref_service.h"
@@ -44,6 +46,11 @@ namespace glic {
 // If kGlicDefaultTabContextSetting is enabled, this always returns true as
 // permission is managed per-instance/tab rather than via a global preference.
 bool IsGlicTabContextEnabled(PrefService* pref_service) {
+  // Local Glic demos load a non-Google web client and need page context without
+  // the normal onboarding/settings flow.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(::switches::kGlicDev)) {
+    return true;
+  }
   if (base::FeatureList::IsEnabled(features::kGlicDefaultTabContextSetting)) {
     return true;
   }

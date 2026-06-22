@@ -435,8 +435,8 @@
   <message name="IDS_GLIC_BUTTON_ENTRYPOINT_PINNED_LABEL" desc="Label on the button used to open Gemini in Chrome when pinned." formatter_data="android_java">
     Toolbar shortcut
   </message>
-  <message name="IDS_GLIC_BUTTON_ENTRYPOINT_ASK_GEMINI_LABEL" desc="Label on the button used to open Gemini in Chrome." formatter_data="android_java">
-    Ask Gemini
+  <message name="IDS_GLIC_BUTTON_ENTRYPOINT_ASK_GEMINI_LABEL" desc="Label on the button used to open Aha BUA Pilot." formatter_data="android_java">
+    Aha BUA Pilot
   </message>
   <message name="IDS_GLIC_BUTTON_ENTRYPOINT_ASK_ABOUT_THIS_PAGE_LABEL" desc="Label on the button used to open Gemini in Chrome.">
     Ask about this page?

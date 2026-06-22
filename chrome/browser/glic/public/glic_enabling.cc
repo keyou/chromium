@@ -483,6 +483,14 @@ GlicEnabling::ProfileEnablement GlicEnabling::EnablementForProfile(
     return result;
   }
 
+  // Local Glic demos use --glic-dev to load a non-Google web client. In that
+  // mode, keep the profile fully enabled without depending on Google account
+  // rollout/capability/user-status checks or Gemini policy prefs.
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(::switches::kGlicDev)) {
+    return result;
+  }
+
   GlicGlobalEnabling& global_enabling =
       g_browser_process->GetFeatures()->glic_global_enabling();
 
@@ -509,7 +517,6 @@ GlicEnabling::ProfileEnablement GlicEnabling::EnablementForProfile(
   }
 
   // Certain checks are bypassed if --glic-dev is passed.
-  auto* command_line = base::CommandLine::ForCurrentProcess();
   if (!command_line->HasSwitch(::switches::kGlicDev)) {
     if (!base::FeatureList::IsEnabled(features::kGlicRollout) &&
         !IsEligibleForGlicTieredRollout(profile)) {
@@ -720,6 +727,12 @@ bool GlicEnabling::IsProfileEligible(Profile* profile) {
     return false;
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+  // Local Glic demos use --glic-dev to bypass production rollout, locale, and
+  // country checks while still requiring a regular profile.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(::switches::kGlicDev)) {
+    return true;
+  }
 
   bool global_criteria = IsEnabledByGlobalCriteria();
   bool consented = HasConsentedForProfile(profile);

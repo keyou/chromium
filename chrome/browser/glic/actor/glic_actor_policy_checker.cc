@@ -8,6 +8,7 @@
 #include <string_view>
 #include <variant>
 
+#include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
@@ -26,6 +27,7 @@
 #include "chrome/browser/subscription_eligibility/subscription_eligibility_service_factory.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/chrome_switches.h"
 #include "components/actor/core/aggregated_journal.h"
 #include "components/actor/core/journal_details_builder.h"
 #include "components/actor/core/task_id.h"
@@ -382,6 +384,14 @@ GlicActorPolicyChecker::ComputeActOnWebCapability() {
     return log_and_return(
         CanActOutcome::kYes,
         "extempted via cmdline `glic_actor_policy_control_exemption`");
+  }
+
+  // Local Glic demos use --glic-dev with a non-Google web client and a
+  // non-Gemini model. Do not require Google account capabilities, Chrome
+  // Benefits, or enterprise actuation policy in that development mode.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(::switches::kGlicDev)) {
+    return log_and_return(CanActOutcome::kYes,
+                          "enabled by --glic-dev for local demo");
   }
 
   // If the main Glic check has been split to no longer use the

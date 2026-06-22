@@ -38,7 +38,6 @@
 #include "components/private_ai/features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/color/color_variant.h"
 #include "ui/compositor/layer.h"
@@ -854,9 +853,8 @@ class GlicButton : public GlicBaseShim<T>,
   }
 
   ui::ImageModel GetNormalIcon(const int icon_size) {
-    return ui::ImageModel::FromImageSkia(
-        *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-            IDR_GLIC_BUTTON_ALT_ICON));
+    return ui::ImageModel::FromVectorIcon(GlicVectorIcon(), kForeground,
+                                          icon_size);
   }
 
   ui::ImageModel GetIconForHighlight(const int icon_size) {

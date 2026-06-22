@@ -10,6 +10,7 @@
 #include <variant>
 
 #include "base/base_paths.h"
+#include "base/base_switches.h"
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
@@ -112,7 +113,6 @@
 
 #include <algorithm>
 
-#include "base/base_switches.h"
 #include "base/files/important_file_writer_cleaner.h"
 #include "base/process/process_handle.h"
 #include "base/win/current_module.h"
@@ -274,6 +274,44 @@ bool IsSandboxedProcess() {
 }
 
 #endif  // BUILDFLAG(IS_WIN)
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+constexpr char kLocalGlicGuestUrl[] = "https://zzcdznht.fn.bytedance.net";
+constexpr char kLocalGlicEnabledFeatures[] =
+    "Glic,GlicActor,GlicActorUi,GlicActorToctouValidation,"
+    "GlicActorSkipScreenshot";
+constexpr char kLocalGlicDisabledFeatures[] = "GlicUserStatusCheck";
+
+void AppendCommaSeparatedSwitchValue(base::CommandLine* command_line,
+                                     const char* switch_name,
+                                     const char* value) {
+  std::string switch_value = command_line->GetSwitchValueASCII(switch_name);
+  if (!switch_value.empty()) {
+    switch_value.append(",");
+  }
+  switch_value.append(value);
+
+  command_line->RemoveSwitch(switch_name);
+  command_line->AppendSwitchASCII(switch_name, switch_value);
+}
+
+void AddLocalGlicStartupSwitches(base::CommandLine* command_line) {
+  // Keep this local build aligned with run_mainr_glic.ps1 without changing Glic
+  // feature defaults or downstream switch checks.
+  command_line->AppendSwitch(switches::kTestType);
+  command_line->AppendSwitch(switches::kGlicDev);
+  command_line->AppendSwitch(switches::kGlicAutomation);
+  if (!command_line->HasSwitch(switches::kGlicGuestURL)) {
+    command_line->AppendSwitchASCII(switches::kGlicGuestURL,
+                                    kLocalGlicGuestUrl);
+  }
+  AppendCommaSeparatedSwitchValue(command_line, switches::kEnableFeatures,
+                                  kLocalGlicEnabledFeatures);
+  AppendCommaSeparatedSwitchValue(command_line, switches::kDisableFeatures,
+                                  kLocalGlicDisabledFeatures);
+}
+
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 void AdjustLinuxOOMScore(const std::string& process_type) {
@@ -1059,6 +1097,9 @@ std::optional<int> ChromeMainDelegate::BasicStartupComplete() {
   ash::BootTimesRecorder::Get()->SaveChromeMainStats();
 #endif
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  AddLocalGlicStartupSwitches(base::CommandLine::ForCurrentProcess());
+#endif
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
 
