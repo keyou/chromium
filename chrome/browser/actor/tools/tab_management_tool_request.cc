@@ -61,6 +61,11 @@ ToolRequest::CreateToolResult ActivateTabToolRequest::CreateTool(
       MakeOkResult()};
 }
 
+bool ActivateTabToolRequest::RequiresUrlCheckInCurrentTab() const {
+  // Tab activation is browser tab management, not page content actuation.
+  return false;
+}
+
 void ActivateTabToolRequest::Apply(ToolRequestVisitorFunctor& f) const {
   f.Apply(*this);
 }
@@ -87,6 +92,11 @@ ToolRequest::CreateToolResult CloseTabToolRequest::CreateTool(
       std::make_unique<TabManagementTool>(
           task_id, tool_delegate, TabManagementTool::kClose, GetTabHandle()),
       MakeOkResult()};
+}
+
+bool CloseTabToolRequest::RequiresUrlCheckInCurrentTab() const {
+  // Tab closing is browser tab management, not page content actuation.
+  return false;
 }
 
 void CloseTabToolRequest::Apply(ToolRequestVisitorFunctor& f) const {

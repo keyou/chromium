@@ -13,6 +13,7 @@
 #include "chrome/browser/accessibility/accessibility_labels_service.h"
 #include "chrome/browser/accessibility/accessibility_labels_service_factory.h"
 #include "chrome/browser/actor/actor_script_tool_receiver.h"
+#include "chrome/browser/bua/bua_document_service.h"
 #include "chrome/browser/buildflags.h"
 #include "chrome/browser/dom_distiller/dom_distiller_service_factory.h"
 #include "chrome/browser/navigation_predictor/navigation_predictor.h"
@@ -451,6 +452,8 @@ void PopulateChromeFrameBinders(
 
   map->Add<blink::mojom::ScriptToolHost>(
       &actor::ActorScriptToolReceiver::Create);
+
+  map->Add<bua::mojom::BuaHost>(&bua::BuaDocumentService::Create);
 
   map->Add<blink::mojom::AnchorElementMetricsHost>(
       &NavigationPredictor::Create);

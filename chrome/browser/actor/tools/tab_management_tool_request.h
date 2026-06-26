@@ -44,6 +44,7 @@ class ActivateTabToolRequest : public TabToolRequest {
   ~ActivateTabToolRequest() override;
   CreateToolResult CreateTool(TaskId task_id,
                               ToolDelegate& tool_delegate) const override;
+  bool RequiresUrlCheckInCurrentTab() const override;
   void Apply(ToolRequestVisitorFunctor& f) const override;
   std::string_view Name() const override;
 };
@@ -57,6 +58,7 @@ class CloseTabToolRequest : public TabToolRequest {
   ~CloseTabToolRequest() override;
   CreateToolResult CreateTool(TaskId task_id,
                               ToolDelegate& tool_delegate) const override;
+  bool RequiresUrlCheckInCurrentTab() const override;
   void Apply(ToolRequestVisitorFunctor& f) const override;
   std::string_view Name() const override;
 };

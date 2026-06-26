@@ -58,6 +58,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "cc/base/switches.h"
+#include "components/bua/renderer/bua_bindings.h"
 #include "components/history/core/browser/features.h"
 #include "content/common/associated_interfaces.mojom.h"
 #include "content/common/content_navigation_policy.h"
@@ -4155,6 +4156,8 @@ void RenderFrameImpl::DidClearWindowObject() {
 
   if (command_line.HasSwitch(switches::kEnableSkiaBenchmarking))
     SkiaBenchmarking::Install(frame_);
+
+  bua::BuaBindings::Install(this);
 
   for (auto& observer : observers_)
     observer.DidClearWindowObject();

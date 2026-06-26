@@ -2209,6 +2209,7 @@ static_library("browser") {
     "//chrome/browser/browsing_topics:impl",
     "//chrome/browser/btm",
     "//chrome/browser/btm:impl",
+    "//chrome/browser/bua",
     "//chrome/browser/chooser_controller",
     "//chrome/browser/client_hints",
     "//chrome/browser/collaboration:impl",

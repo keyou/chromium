@@ -30,6 +30,8 @@ target(link_target_type, "renderer") {
   ]
 
   sources = [
+    "//components/bua/renderer/bua_bindings.cc",
+    "//components/bua/renderer/bua_bindings.h",
     "accessibility/annotations/ax_annotator.h",
     "accessibility/annotations/ax_annotators_manager.cc",
     "accessibility/annotations/ax_annotators_manager.h",
@@ -235,6 +237,7 @@ target(link_target_type, "renderer") {
     "//cc/mojo_embedder",
     "//cc/mojom",
     "//cc/paint",
+    "//components/bua:mojom",
     "//components/discardable_memory/client",
     "//components/history/core/browser:features",
     "//components/input",

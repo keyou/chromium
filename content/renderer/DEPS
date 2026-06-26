@@ -4,6 +4,7 @@ include_rules = [
   # *********************************** NOTE ***********************************
   # If adding a new component dependency, email content/OWNERS first.
   # ****************************************************************************
+  "+components/bua/renderer",
   "+components/content_settings/core/common",
   "+components/discardable_memory/client",
   "+components/metrics",

@@ -1,0 +1,27 @@
+source_set("bua") {
+  sources = [
+    "bua_document_service.cc",
+    "bua_document_service.h",
+  ]
+
+  deps = [
+    "//base",
+    "//chrome/browser/actor",
+    "//chrome/browser/glic",
+    "//chrome/browser/glic:impl",
+    "//chrome/browser/glic/actor",
+    "//chrome/common:mojo_bindings",
+    "//components/actor/core",
+    "//components/actor/public/mojom:mojo_bindings",
+    "//components/bua:mojom",
+    "//components/optimization_guide/proto:optimization_guide_proto",
+    "//components/page_content_annotations/content",
+    "//components/tabs:public",
+    "//content/public/browser",
+    "//content/public/common",
+    "//mojo/public/cpp/base:protobuf_support",
+    "//mojo/public/cpp/bindings",
+    "//ui/base",
+    "//url",
+  ]
+}

@@ -13,6 +13,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/actor.mojom.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents.h"
@@ -169,6 +170,30 @@ IN_PROC_BROWSER_TEST_F(ActorTabManagementToolBrowserTest, ActivateTab) {
   ASSERT_EQ(tsm->GetTabAtIndex(0), tsm->GetActiveTab());
 }
 
+IN_PROC_BROWSER_TEST_F(ActorTabManagementToolBrowserTest,
+                       ActivateTabDoesNotRequireWebScheme) {
+  const GURL start_tab_url =
+      embedded_https_test_server().GetURL("/actor/blank.html");
+  ASSERT_TRUE(content::NavigateToURL(web_contents(), start_tab_url));
+
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), GURL(chrome::kChromeUIVersionURL),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  TabStripModel* tsm = browser()->tab_strip_model();
+  ASSERT_EQ(tsm->count(), 2);
+  ASSERT_EQ(tsm->GetTabAtIndex(1), tsm->GetActiveTab());
+
+  std::unique_ptr<ToolRequest> action =
+      MakeActivateTabRequest(tsm->GetTabAtIndex(1)->GetHandle());
+  ActResultFuture act_result;
+  actor_task().Act(ToRequestList(action), act_result.GetCallback());
+  ExpectOkResult(act_result);
+
+  ASSERT_EQ(tsm->count(), 2);
+  ASSERT_EQ(tsm->GetTabAtIndex(1), tsm->GetActiveTab());
+}
+
 IN_PROC_BROWSER_TEST_F(ActorTabManagementToolBrowserTest, CloseTab) {
   // Navigate the first tab.
   const GURL start_tab_url =
@@ -186,6 +211,30 @@ IN_PROC_BROWSER_TEST_F(ActorTabManagementToolBrowserTest, CloseTab) {
   // Use a TabManagementTool to close the inactive tab.
   std::unique_ptr<ToolRequest> action =
       MakeCloseTabRequest(tsm->GetTabAtIndex(0)->GetHandle());
+  ActResultFuture act_result;
+  actor_task().Act(ToRequestList(action), act_result.GetCallback());
+  ExpectOkResult(act_result);
+
+  ASSERT_EQ(tsm->count(), 1);
+  ASSERT_EQ(tsm->GetTabAtIndex(0), tsm->GetActiveTab());
+}
+
+IN_PROC_BROWSER_TEST_F(ActorTabManagementToolBrowserTest,
+                       CloseTabDoesNotRequireWebScheme) {
+  const GURL start_tab_url =
+      embedded_https_test_server().GetURL("/actor/blank.html");
+  ASSERT_TRUE(content::NavigateToURL(web_contents(), start_tab_url));
+
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), GURL(chrome::kChromeUIVersionURL),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  TabStripModel* tsm = browser()->tab_strip_model();
+  ASSERT_EQ(tsm->count(), 2);
+  ASSERT_EQ(tsm->GetTabAtIndex(1), tsm->GetActiveTab());
+
+  std::unique_ptr<ToolRequest> action =
+      MakeCloseTabRequest(tsm->GetTabAtIndex(1)->GetHandle());
   ActResultFuture act_result;
   actor_task().Act(ToRequestList(action), act_result.GetCallback());
   ExpectOkResult(act_result);
