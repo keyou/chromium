@@ -29,7 +29,7 @@ class TabObservationStrategy;
 namespace content {
 class RenderFrameHost;
 class WebContents;
-}
+}  // namespace content
 
 namespace glic {
 class GlicKeyedService;
@@ -61,7 +61,8 @@ class BuaDocumentService final
 
   bool IsRequestAllowed() const;
   content::WebContents* GetWebContents() const;
-  tabs::TabInterface* GetCurrentTab() const;
+  tabs::TabInterface* GetRequestingTab() const;
+  tabs::TabInterface* GetDefaultTargetTab() const;
   glic::GlicKeyedService* GetGlicService() const;
   actor::ActorKeyedService* GetActorService() const;
 
@@ -69,11 +70,12 @@ class BuaDocumentService final
   void OnSnapshot(
       RequestCallback callback,
       std::string snapshot_id,
+      std::string snapshot_mode,
       int generation,
       int max_nodes,
-      base::expected<
-          glic::mojom::GetContextResultPtr,
-          page_content_annotations::FetchPageContextErrorDetails> result);
+      base::expected<glic::mojom::GetContextResultPtr,
+                     page_content_annotations::FetchPageContextErrorDetails>
+          result);
 
   void HandleAct(const base::DictValue& request, RequestCallback callback);
   void OnActionsFinished(

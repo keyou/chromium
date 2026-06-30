@@ -21,6 +21,7 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -35,6 +36,11 @@
 #include "chrome/browser/glic/host/glic.mojom.h"
 #include "chrome/browser/glic/public/glic_keyed_service.h"
 #include "chrome/browser/glic/public/glic_keyed_service_factory.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/tab_list/tab_list_interface.h"
+#include "chrome/browser/ui/browser_window/public/browser_collection.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/common/actor/action_result.h"
 #include "components/actor/core/task_source_info.h"
 #include "components/actor/public/mojom/actor_types.mojom.h"
@@ -54,7 +60,7 @@ namespace {
 
 namespace apc = optimization_guide::proto;
 
-constexpr char kNodeIdPrefix[] = "apc:";
+constexpr char kNodeIdPrefix[] = "bua-page-node:";
 constexpr int kDefaultInnerTextBytesLimit = 256 * 1024;
 constexpr int kDefaultPdfBytesLimit = 2 * 1024 * 1024;
 constexpr int kDefaultMaxNodes = 2000;
@@ -153,6 +159,143 @@ std::optional<int32_t> ParseTabId(std::string_view id) {
   return value;
 }
 
+std::optional<int32_t> ParseWindowId(std::string_view id) {
+  constexpr std::string_view kPrefix = "window:";
+  if (!id.starts_with(kPrefix)) {
+    return std::nullopt;
+  }
+  int value = 0;
+  if (!base::StringToInt(id.substr(kPrefix.size()), &value)) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+bool IsEligibleBrowser(BrowserWindowInterface* browser,
+                       content::BrowserContext* browser_context) {
+  return browser && !browser->IsDeleteScheduled() &&
+         browser->GetType() == BrowserWindowInterface::TYPE_NORMAL &&
+         browser->GetProfile() == browser_context;
+}
+
+BrowserWindowInterface* FindBrowserForProfile(
+    content::BrowserContext* browser_context,
+    std::optional<int32_t> window_id = std::nullopt,
+    bool require_active_tab = false) {
+  GlobalBrowserCollection* collection = GlobalBrowserCollection::GetInstance();
+  if (!collection) {
+    return nullptr;
+  }
+
+  BrowserWindowInterface* result = nullptr;
+  collection->ForEach(
+      [&](BrowserWindowInterface* browser) {
+        if (!IsEligibleBrowser(browser, browser_context)) {
+          return true;
+        }
+        if (window_id && browser->GetSessionID().id() != *window_id) {
+          return true;
+        }
+        if (require_active_tab) {
+          TabListInterface* tab_list = TabListInterface::From(browser);
+          if (!tab_list || tab_list->GetTabCount() <= 0 ||
+              !tab_list->GetActiveTab()) {
+            return true;
+          }
+        }
+        result = browser;
+        return false;
+      },
+      BrowserCollection::Order::kActivation);
+  return result;
+}
+
+bool HasBrowserForProfile(content::BrowserContext* browser_context) {
+  return !!FindBrowserForProfile(browser_context);
+}
+
+bool IsBuaUiTab(tabs::TabInterface* tab,
+                content::WebContents* requesting_web_contents) {
+  if (!tab) {
+    return false;
+  }
+  if (tab->GetContents() == requesting_web_contents) {
+    return true;
+  }
+  const GURL url = tab->GetURL();
+  return url.SchemeIs("chrome") && url.host() == "glic";
+}
+
+bool IsUsableDefaultTargetTab(tabs::TabInterface* tab,
+                              content::BrowserContext* browser_context,
+                              content::WebContents* requesting_web_contents) {
+  return tab && tab->GetProfile() == browser_context &&
+         !IsBuaUiTab(tab, requesting_web_contents);
+}
+
+tabs::TabInterface* FindDefaultTabForProfile(
+    content::BrowserContext* browser_context,
+    content::WebContents* requesting_web_contents) {
+  GlobalBrowserCollection* collection = GlobalBrowserCollection::GetInstance();
+  if (!collection) {
+    return nullptr;
+  }
+
+  tabs::TabInterface* best_tab = nullptr;
+  base::Time best_last_active_time;
+  collection->ForEach(
+      [&](BrowserWindowInterface* browser) {
+        if (!IsEligibleBrowser(browser, browser_context)) {
+          return true;
+        }
+        TabListInterface* tab_list = TabListInterface::From(browser);
+        if (!tab_list) {
+          return true;
+        }
+        tabs::TabInterface* active_tab = tab_list->GetActiveTab();
+        if (IsUsableDefaultTargetTab(active_tab, browser_context,
+                                     requesting_web_contents)) {
+          best_tab = active_tab;
+          return false;
+        }
+        for (tabs::TabInterface* tab : tab_list->GetAllTabs()) {
+          if (!IsUsableDefaultTargetTab(tab, browser_context,
+                                        requesting_web_contents)) {
+            continue;
+          }
+          if (!best_tab || tab->GetLastActiveTime() > best_last_active_time) {
+            best_tab = tab;
+            best_last_active_time = tab->GetLastActiveTime();
+          }
+        }
+        return true;
+      },
+      BrowserCollection::Order::kActivation);
+  return best_tab;
+}
+
+base::DictValue BuildNoTargetState(std::string reason, std::string message) {
+  base::DictValue state;
+  state.Set("kind", "no_target");
+  state.Set("reason", std::move(reason));
+  state.Set("message", std::move(message));
+  return state;
+}
+
+std::string NoDefaultTargetError(content::BrowserContext* browser_context,
+                                 std::string operation) {
+  if (!HasBrowserForProfile(browser_context)) {
+    return Error("no_target",
+                 operation + " requires a browser window for this profile.",
+                 "target_not_found");
+  }
+  return Error("no_target",
+               operation +
+                   " requires target.tabId or an available tab in the "
+                   "selected browser window.",
+               "target_not_found");
+}
+
 const base::DictValue* FindRequestTargetRef(const base::DictValue& request) {
   if (const base::DictValue* target = request.FindDict("target")) {
     return target;
@@ -163,68 +306,109 @@ const base::DictValue* FindRequestTargetRef(const base::DictValue& request) {
   return nullptr;
 }
 
-tabs::TabInterface* ResolveTargetTabOrCurrent(
+tabs::TabInterface* ResolveTargetRef(const base::DictValue& target,
+                                     tabs::TabInterface* default_tab,
+                                     content::BrowserContext* browser_context,
+                                     std::string* error_json) {
+  if (target.FindBool("current").value_or(false)) {
+    if (!default_tab) {
+      *error_json = NoDefaultTargetError(browser_context, "target.current");
+    }
+    return default_tab;
+  }
+
+  const std::string* target_id = target.FindString("targetId");
+  const std::string* target_tab_id = target.FindString("tabId");
+  if (!target_tab_id && target_id && target_id->starts_with("tab:")) {
+    target_tab_id = target_id;
+  }
+
+  if (target_tab_id) {
+    std::optional<int32_t> parsed_tab_id = ParseTabId(*target_tab_id);
+    if (!parsed_tab_id) {
+      *error_json =
+          Error("invalid_request", "target.tabId is invalid.", "input");
+      return nullptr;
+    }
+
+    tabs::TabInterface* target_tab = tabs::TabHandle(*parsed_tab_id).Get();
+    if (!target_tab || target_tab->GetProfile() != browser_context) {
+      *error_json =
+          Error("target_not_found",
+                "target.tabId does not refer to a live tab in this profile.",
+                "target_not_found");
+      return nullptr;
+    }
+    return target_tab;
+  }
+
+  const std::string* target_window_id = target.FindString("windowId");
+  if (!target_window_id && target_id && target_id->starts_with("window:")) {
+    target_window_id = target_id;
+  }
+  if (target_window_id) {
+    std::optional<int32_t> parsed_window_id = ParseWindowId(*target_window_id);
+    if (!parsed_window_id) {
+      *error_json =
+          Error("invalid_request", "target.windowId is invalid.", "input");
+      return nullptr;
+    }
+
+    BrowserWindowInterface* browser =
+        FindBrowserForProfile(browser_context, parsed_window_id,
+                              /*require_active_tab=*/true);
+    if (!browser) {
+      *error_json =
+          Error("target_not_found",
+                "target.windowId does not refer to a browser window with an "
+                "active tab in this profile.",
+                "target_not_found");
+      return nullptr;
+    }
+    return TabListInterface::From(browser)->GetActiveTab();
+  }
+
+  *error_json = Error(
+      "invalid_request",
+      "target requires tabId, targetId, windowId, or current=true.", "input");
+  return nullptr;
+}
+
+tabs::TabInterface* ResolveTargetTabOrDefault(
     const base::DictValue& request,
-    tabs::TabInterface* current_tab,
+    tabs::TabInterface* default_tab,
+    content::BrowserContext* browser_context,
     std::string* error_json) {
   const base::DictValue* target = FindRequestTargetRef(request);
-  const std::string* target_tab_id =
-      target ? target->FindString("tabId") : nullptr;
-  if (!target_tab_id) {
-    return current_tab;
+  if (!target) {
+    return default_tab;
   }
-
-  std::optional<int32_t> parsed_tab_id = ParseTabId(*target_tab_id);
-  if (!parsed_tab_id) {
-    *error_json = Error("invalid_request", "target.tabId is invalid.",
-                        "input");
-    return nullptr;
-  }
-
-  tabs::TabInterface* target_tab = tabs::TabHandle(*parsed_tab_id).Get();
-  if (!target_tab) {
-    *error_json =
-        Error("target_not_found", "target.tabId does not refer to a live tab.",
-              "target_not_found");
-    return nullptr;
-  }
-  return target_tab;
+  return ResolveTargetRef(*target, default_tab, browser_context, error_json);
 }
 
 std::optional<int32_t> ResolveActionTabId(
     const base::DictValue& action,
     tabs::TabInterface* default_tab,
+    content::BrowserContext* browser_context,
     std::string* error_json) {
   const base::DictValue* target_ref = action.FindDict("targetRef");
-  const std::string* target_tab_id =
-      target_ref ? target_ref->FindString("tabId") : nullptr;
-  if (!target_tab_id) {
+  if (!target_ref) {
     if (!default_tab) {
-      *error_json =
-          Error("no_target",
-                "Action requires targetRef.tabId when BUA is not running in "
-                "a browser tab.",
-                "target_not_found");
+      *error_json = NoDefaultTargetError(browser_context, "Action");
       return std::nullopt;
     }
     return default_tab->GetHandle().raw_value();
   }
 
-  std::optional<int32_t> parsed_tab_id = ParseTabId(*target_tab_id);
-  if (!parsed_tab_id) {
-    *error_json =
-        Error("invalid_request", "action targetRef.tabId is invalid.",
-              "input");
+  tabs::TabInterface* target_tab =
+      ResolveTargetRef(*target_ref, default_tab, browser_context, error_json);
+  if (!target_tab) {
+    if (error_json->empty()) {
+      *error_json = NoDefaultTargetError(browser_context, "Action");
+    }
     return std::nullopt;
   }
-  if (!tabs::TabHandle(*parsed_tab_id).Get()) {
-    *error_json = Error(
-        "target_not_found",
-        "action targetRef.tabId does not refer to a live tab.",
-        "target_not_found");
-    return std::nullopt;
-  }
-  return *parsed_tab_id;
+  return target_tab->GetHandle().raw_value();
 }
 
 base::DictValue BuildTargetSnapshotFromTabData(
@@ -256,8 +440,7 @@ base::DictValue BuildTargetSnapshotFromTabData(
   return target;
 }
 
-base::DictValue BuildTargetSnapshot(tabs::TabInterface* tab,
-                                    content::WebContents* web_contents) {
+base::DictValue BuildTargetSnapshotFromTab(tabs::TabInterface* tab) {
   if (tab) {
     glic::mojom::TabDataPtr tab_data = glic::CreateTabData(tab);
     if (tab_data) {
@@ -266,25 +449,162 @@ base::DictValue BuildTargetSnapshot(tabs::TabInterface* tab,
   }
 
   base::DictValue target;
-  target.Set("id", "current");
+  if (!tab) {
+    target.Set("id", "unknown");
+    target.Set("kind", "page");
+    target.Set("readable", false);
+    return target;
+  }
+
+  const int32_t tab_id = tab->GetHandle().raw_value();
+  target.Set("id", TabIdString(tab_id));
   target.Set("kind", "page");
-  if (web_contents) {
-    target.Set("url", web_contents->GetVisibleURL().spec());
-    target.Set("title",
-               base::UTF16ToUTF8(web_contents->GetTitle()));
-    target.Set("active", true);
-    target.Set("focused", true);
+  target.Set("tabId", TabIdString(tab_id));
+  if (BrowserWindowInterface* browser = tab->GetBrowserWindowInterface()) {
+    target.Set("windowId", WindowIdString(browser->GetSessionID().id()));
+  }
+  target.Set("url", tab->GetURL().spec());
+  target.Set("title", base::UTF16ToUTF8(tab->GetTitle()));
+  if (content::WebContents* contents = tab->GetContents()) {
+    target.Set("mimeType", contents->GetContentsMimeType());
     target.Set("readable", true);
-    target.Set("updatedAtMs", static_cast<double>(NowMs()));
   } else {
     target.Set("readable", false);
   }
+  target.Set("active", tab->IsActivated());
+  target.Set("focused", false);
+  target.Set("updatedAtMs", static_cast<double>(NowMs()));
   return target;
+}
+
+base::ListValue BuildTargetListForProfile(
+    content::BrowserContext* browser_context,
+    std::optional<int32_t> window_id,
+    bool include_background) {
+  base::ListValue targets;
+  GlobalBrowserCollection* collection = GlobalBrowserCollection::GetInstance();
+  if (!collection) {
+    return targets;
+  }
+
+  collection->ForEach(
+      [&](BrowserWindowInterface* browser) {
+        if (!IsEligibleBrowser(browser, browser_context)) {
+          return true;
+        }
+        if (window_id && browser->GetSessionID().id() != *window_id) {
+          return true;
+        }
+        TabListInterface* tab_list = TabListInterface::From(browser);
+        if (!tab_list) {
+          return true;
+        }
+        for (tabs::TabInterface* tab : tab_list->GetAllTabs()) {
+          if (!tab || (!include_background && !tab->IsActivated())) {
+            continue;
+          }
+          targets.Append(BuildTargetSnapshotFromTab(tab));
+        }
+        return true;
+      },
+      BrowserCollection::Order::kActivation);
+  return targets;
+}
+
+bool IsCreateTabUrlAllowed(const GURL& url) {
+  return url.is_valid() && (url.SchemeIsHTTPOrHTTPS() || url.SchemeIs("about"));
+}
+
+tabs::TabInterface* CreateTabForProfile(
+    content::BrowserContext* browser_context,
+    const GURL& url,
+    bool background,
+    std::optional<int32_t> window_id,
+    std::string* error_json) {
+  BrowserWindowInterface* browser =
+      FindBrowserForProfile(browser_context, window_id,
+                            /*require_active_tab=*/false);
+  if (!browser) {
+    *error_json =
+        Error(window_id ? "target_not_found" : "no_target",
+              window_id ? "windowId does not refer to a browser window in "
+                          "this profile."
+                        : "targets.createTab requires an existing browser "
+                          "window for this profile.",
+              "target_not_found");
+    return nullptr;
+  }
+  TabListInterface* tab_list = TabListInterface::From(browser);
+  if (!tab_list) {
+    *error_json = Error("backend_unavailable",
+                        "Selected browser window does not expose a tab list.",
+                        "backend_error");
+    return nullptr;
+  }
+  tabs::TabInterface* tab =
+      tab_list->OpenTab(url, /*index=*/-1, /*foreground=*/!background);
+  if (!tab) {
+    *error_json =
+        Error("create_tab_failed", "TabListInterface did not create a tab.",
+              "browser_state");
+  }
+  return tab;
+}
+
+bool NavigateActionCanCreateTab(const base::DictValue& action) {
+  const std::string kind = FindStringMember(action, "kind").value_or("");
+  if (kind != "navigate") {
+    return false;
+  }
+  const base::DictValue* target_ref = action.FindDict("targetRef");
+  return !target_ref || target_ref->FindBool("current").value_or(false);
+}
+
+std::optional<GURL> NavigateUrlFromAction(const base::DictValue& action,
+                                          std::string* error_json) {
+  const std::string* url_string = action.FindString("url");
+  if (!url_string) {
+    *error_json =
+        Error("invalid_request", "navigate action requires url.", "input");
+    return std::nullopt;
+  }
+  const GURL url(*url_string);
+  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
+    *error_json =
+        Error("invalid_request",
+              "navigate action only accepts valid HTTP(S) URLs.", "navigation");
+    return std::nullopt;
+  }
+  return url;
+}
+
+base::DictValue BuildCreatedTabNavigateResult(const base::DictValue& action,
+                                              tabs::TabInterface* tab,
+                                              base::TimeTicks start_time) {
+  base::DictValue result;
+  result.Set("ok", true);
+  result.Set("status", "succeeded");
+  result.Set(
+      "actionId",
+      FindStringMember(action, "id").value_or(std::string("bua-action-0")));
+  result.Set("code", "bua:navigate_created_tab");
+  result.Set("category", "navigation");
+  result.Set("message",
+             "navigate created a new tab because no default tab existed.");
+  result.Set("target", BuildTargetSnapshotFromTab(tab));
+
+  base::DictValue timing;
+  timing.Set("endedAtMs", static_cast<double>(NowMs()));
+  timing.Set(
+      "elapsedMs",
+      static_cast<int>((base::TimeTicks::Now() - start_time).InMilliseconds()));
+  result.Set("timing", std::move(timing));
+  return result;
 }
 
 base::DictValue BuildCapabilities() {
   base::DictValue backend;
-  backend.Set("name", "glic-actor");
+  backend.Set("name", "bua-chromium");
   backend.Set("version", "0.2");
   backend.Set("protocol", "bua-mojo");
 
@@ -295,9 +615,9 @@ base::DictValue BuildCapabilities() {
   snapshot.Set("pdf", true);
 
   base::DictValue act;
-  act.Set("actions", StringList({"click", "type", "select", "scroll",
-                                  "scroll_to", "hover", "navigate", "history",
-                                  "wait", "tab"}));
+  act.Set("actions",
+          StringList({"click", "type", "select", "scroll", "scroll_to", "hover",
+                      "navigate", "history", "wait", "tab"}));
   act.Set("sequences", true);
   act.Set("snapshotAfterAction", false);
   act.Set("cancel", false);
@@ -359,11 +679,10 @@ base::DictValue BuildAvailability(bool has_tab,
     browser_actuation.Set(
         "reason",
         !has_actor_service
-            ? "ActorKeyedService is unavailable. Enable the Glic Actor "
-              "backend for real browser actuation."
-            : !has_glic_service || !has_policy_checker
-                  ? "Glic actor policy checker is unavailable."
-                  : "Glic actor policy checker denied act-on-web.");
+            ? "BUA actuation backend is unavailable."
+        : !has_glic_service || !has_policy_checker
+            ? "BUA actuation policy checker is unavailable."
+            : "BUA actuation policy denied act-on-web.");
   }
   permissions.Append(std::move(browser_actuation));
 
@@ -381,27 +700,27 @@ base::DictValue BuildAvailability(bool has_tab,
     diagnostic.Set("category", "backend");
     diagnostic.Set(
         "message",
-        "BUA is wired to Glic page context and Actor actions. Actuation "
-        "requires ActorKeyedService plus GlicActorPolicyChecker permission.");
-    diagnostic.Set("hasGlicService", has_glic_service);
-    diagnostic.Set("hasActorService", has_actor_service);
-    diagnostic.Set("hasPolicyChecker", has_policy_checker);
+        "BUA snapshot and actuation are backed by Chromium services. "
+        "Actuation requires the browser actuation backend plus policy "
+        "permission.");
+    diagnostic.Set("hasSnapshotBackend", has_glic_service);
+    diagnostic.Set("hasActuationBackend", has_actor_service);
+    diagnostic.Set("hasActuationPolicy", has_policy_checker);
     diagnostic.Set("canActOnWeb", can_act_on_web);
     diagnostics.Append(std::move(diagnostic));
   }
 
   base::DictValue availability;
-  availability.Set("status",
-                   has_tab && can_act_on_web
-                       ? "available"
-                       : has_tab ? "degraded" : "unavailable");
+  availability.Set("status", has_tab && can_act_on_web ? "available"
+                             : has_tab                 ? "degraded"
+                                                       : "unavailable");
   availability.Set("canReadPage",
                    has_tab ? OkCheck() : FailedCheck("No tab is available."));
   availability.Set(
       "canAct",
       can_act_on_web
           ? OkCheck()
-          : FailedCheck("Actor/Glic act-on-web backend is unavailable or "
+          : FailedCheck("BUA act-on-web backend is unavailable or "
                         "blocked by policy."));
   availability.Set("focusedTarget",
                    has_tab ? OkCheck() : FailedCheck("No tab is available."));
@@ -411,26 +730,27 @@ base::DictValue BuildAvailability(bool has_tab,
   return availability;
 }
 
-std::string EncodeApcNodeId(std::string_view document_identifier,
-                            int dom_node_id) {
+std::string EncodeBuaPageNodeId(std::string_view document_identifier,
+                                int dom_node_id) {
   std::string encoded_document;
   base::Base64UrlEncode(document_identifier,
                         base::Base64UrlEncodePolicy::OMIT_PADDING,
                         &encoded_document);
-  return base::StringPrintf("%s%s:%d", kNodeIdPrefix,
-                            encoded_document.c_str(), dom_node_id);
+  return base::StringPrintf("%s%s:%d", kNodeIdPrefix, encoded_document.c_str(),
+                            dom_node_id);
 }
 
-struct ApcNodeRef {
+struct BuaPageNodeRef {
   std::string document_identifier;
   int dom_node_id = 0;
 };
 
-std::optional<ApcNodeRef> DecodeApcNodeId(std::string_view node_id) {
+std::optional<BuaPageNodeRef> DecodeBuaPageNodeId(std::string_view node_id) {
   if (!node_id.starts_with(kNodeIdPrefix)) {
     return std::nullopt;
   }
-  std::string_view body = node_id.substr(std::string_view(kNodeIdPrefix).size());
+  std::string_view body =
+      node_id.substr(std::string_view(kNodeIdPrefix).size());
   size_t separator = body.rfind(':');
   if (separator == std::string_view::npos || separator == 0 ||
       separator == body.size() - 1) {
@@ -438,10 +758,9 @@ std::optional<ApcNodeRef> DecodeApcNodeId(std::string_view node_id) {
   }
 
   std::string document_identifier;
-  if (!base::Base64UrlDecode(
-          body.substr(0, separator),
-          base::Base64UrlDecodePolicy::DISALLOW_PADDING,
-          &document_identifier)) {
+  if (!base::Base64UrlDecode(body.substr(0, separator),
+                             base::Base64UrlDecodePolicy::DISALLOW_PADDING,
+                             &document_identifier)) {
     return std::nullopt;
   }
 
@@ -449,7 +768,7 @@ std::optional<ApcNodeRef> DecodeApcNodeId(std::string_view node_id) {
   if (!base::StringToInt(body.substr(separator + 1), &dom_node_id)) {
     return std::nullopt;
   }
-  return ApcNodeRef{std::move(document_identifier), dom_node_id};
+  return BuaPageNodeRef{std::move(document_identifier), dom_node_id};
 }
 
 std::string OriginFromSecurityOrigin(
@@ -465,6 +784,26 @@ base::DictValue BuildRect(const apc::BoundingRect& rect) {
   value.Set("width", rect.width());
   value.Set("height", rect.height());
   return value;
+}
+
+base::DictValue BuildSize(const apc::BoundingSize& size) {
+  base::DictValue value;
+  value.Set("width", size.width());
+  value.Set("height", size.height());
+  return value;
+}
+
+std::string SnapshotModeFromRequest(const base::DictValue& request) {
+  const base::DictValue* options = request.FindDict("options");
+  const std::string* mode = options ? options->FindString("mode") : nullptr;
+  return mode && *mode == "interact" ? "interact" : "default";
+}
+
+apc::AnnotatedPageContentMode ApcModeForSnapshotMode(
+    std::string_view snapshot_mode) {
+  return snapshot_mode == "interact"
+             ? apc::ANNOTATED_PAGE_CONTENT_MODE_ACTIONABLE_ELEMENTS
+             : apc::ANNOTATED_PAGE_CONTENT_MODE_DEFAULT;
 }
 
 bool HasVisibleBounds(const apc::ContentAttributes& attributes) {
@@ -553,8 +892,7 @@ void MaybeAddAction(base::ListValue& actions, std::string_view action) {
   actions.Append(std::string(action));
 }
 
-base::ListValue ActionsForAttributes(
-    const apc::ContentAttributes& attributes) {
+base::ListValue ActionsForAttributes(const apc::ContentAttributes& attributes) {
   base::ListValue actions;
   if (attributes.has_interaction_info()) {
     const apc::InteractionInfo& interaction = attributes.interaction_info();
@@ -599,6 +937,72 @@ base::ListValue ActionsForAttributes(
   return actions;
 }
 
+std::optional<base::DictValue> ScrollInfoForAttributes(
+    const apc::ContentAttributes& attributes) {
+  if (!attributes.has_interaction_info() ||
+      !attributes.interaction_info().has_scroller_info()) {
+    return std::nullopt;
+  }
+
+  const apc::ScrollerInfo& scroller =
+      attributes.interaction_info().scroller_info();
+  base::DictValue scroll_info;
+  scroll_info.Set("scrollableX", scroller.user_scrollable_horizontal());
+  scroll_info.Set("scrollableY", scroller.user_scrollable_vertical());
+  if (scroller.has_scrolling_bounds()) {
+    scroll_info.Set("scrollingBounds",
+                    BuildSize(scroller.scrolling_bounds()));
+  }
+  if (scroller.has_visible_area()) {
+    scroll_info.Set("visibleArea", BuildRect(scroller.visible_area()));
+  }
+  return scroll_info;
+}
+
+void CollectDescendantNamesForNode(const apc::ContentNode& node,
+                                   std::vector<std::string>* names) {
+  constexpr size_t kMaxNameParts = 8;
+  if (names->size() >= kMaxNameParts) {
+    return;
+  }
+
+  for (const apc::ContentNode& child : node.children_nodes()) {
+    if (names->size() >= kMaxNameParts) {
+      return;
+    }
+
+    const apc::ContentAttributes& attributes = child.content_attributes();
+    if (attributes.has_label() && !attributes.label().empty()) {
+      names->push_back(attributes.label());
+      continue;
+    }
+    if (attributes.has_text_data() &&
+        !attributes.text_data().text_content().empty()) {
+      names->push_back(attributes.text_data().text_content());
+      continue;
+    }
+    if (attributes.has_image_data() &&
+        !attributes.image_data().image_caption().empty()) {
+      names->push_back(attributes.image_data().image_caption());
+      continue;
+    }
+
+    CollectDescendantNamesForNode(child, names);
+  }
+}
+
+std::string DescendantNameForNode(const apc::ContentNode& node) {
+  std::vector<std::string> names;
+  CollectDescendantNamesForNode(node, &names);
+  return base::JoinString(names, " ");
+}
+
+bool ShouldDeriveNameFromDescendants(
+    const apc::ContentAttributes& attributes) {
+  return attributes.attribute_type() == apc::CONTENT_ATTRIBUTE_FORM_CONTROL ||
+         attributes.attribute_type() == apc::CONTENT_ATTRIBUTE_ANCHOR;
+}
+
 base::DictValue BuildFrameInfoFromFrameData(const apc::FrameData& frame_data,
                                             bool main) {
   base::DictValue frame;
@@ -614,20 +1018,20 @@ base::DictValue BuildFrameInfoFromFrameData(const apc::FrameData& frame_data,
     frame.Set("title", frame_data.title());
   }
   if (frame_data.has_security_origin()) {
-    frame.Set("origin", OriginFromSecurityOrigin(
-                            frame_data.security_origin()));
+    frame.Set("origin", OriginFromSecurityOrigin(frame_data.security_origin()));
   }
   return frame;
 }
 
-base::DictValue BuildApcNode(const apc::ContentNode& node,
-                             const std::string& snapshot_id,
-                             std::string document_identifier,
-                             const apc::FrameData* main_frame_data,
-                             int max_nodes,
-                             int* visited_nodes,
-                             int* generated_node_id,
-                             bool* truncated) {
+base::DictValue BuildBuaPageSnapshotNode(
+    const apc::ContentNode& node,
+    const std::string& snapshot_id,
+    std::string document_identifier,
+    const apc::FrameData* main_frame_data,
+    int max_nodes,
+    int* visited_nodes,
+    int* generated_node_id,
+    bool* truncated) {
   ++(*visited_nodes);
   if (*visited_nodes > max_nodes) {
     *truncated = true;
@@ -645,10 +1049,12 @@ base::DictValue BuildApcNode(const apc::ContentNode& node,
   base::DictValue out;
   if (attributes.has_common_ancestor_dom_node_id() &&
       !document_identifier.empty()) {
-    out.Set("id", EncodeApcNodeId(document_identifier,
-                                  attributes.common_ancestor_dom_node_id()));
+    out.Set("id", EncodeBuaPageNodeId(
+                      document_identifier,
+                      attributes.common_ancestor_dom_node_id()));
   } else {
-    out.Set("id", base::StringPrintf("apc-anon:%d", *generated_node_id));
+    out.Set("id", base::StringPrintf("bua-page-node-anon:%d",
+                                      *generated_node_id));
     ++(*generated_node_id);
   }
   out.Set("snapshotId", snapshot_id);
@@ -672,10 +1078,16 @@ base::DictValue BuildApcNode(const apc::ContentNode& node,
     out.Set("value", attributes.anchor_data().url());
   }
 
+  if (!out.FindString("name") && ShouldDeriveNameFromDescendants(attributes)) {
+    std::string descendant_name = DescendantNameForNode(node);
+    if (!descendant_name.empty()) {
+      out.Set("name", std::move(descendant_name));
+    }
+  }
+
   if (attributes.has_geometry() &&
       attributes.geometry().has_visible_bounding_box()) {
-    out.Set("bounds",
-            BuildRect(attributes.geometry().visible_bounding_box()));
+    out.Set("bounds", BuildRect(attributes.geometry().visible_bounding_box()));
   }
 
   base::DictValue state;
@@ -715,6 +1127,10 @@ base::DictValue BuildApcNode(const apc::ContentNode& node,
   }
   out.Set("state", std::move(state));
   out.Set("actions", ActionsForAttributes(attributes));
+  if (std::optional<base::DictValue> scroll_info =
+          ScrollInfoForAttributes(attributes)) {
+    out.Set("scrollInfo", std::move(*scroll_info));
+  }
 
   if (attributes.attribute_type() == apc::CONTENT_ATTRIBUTE_ROOT &&
       main_frame_data) {
@@ -724,8 +1140,7 @@ base::DictValue BuildApcNode(const apc::ContentNode& node,
     const apc::FrameData& frame_data = attributes.iframe_data().frame_data();
     out.Set("frame", BuildFrameInfoFromFrameData(frame_data, false));
     if (frame_data.has_document_identifier()) {
-      document_identifier =
-          frame_data.document_identifier().serialized_token();
+      document_identifier = frame_data.document_identifier().serialized_token();
     }
   } else if (attributes.has_form_data()) {
     base::DictValue form;
@@ -745,9 +1160,9 @@ base::DictValue BuildApcNode(const apc::ContentNode& node,
         *truncated = true;
         break;
       }
-      children.Append(BuildApcNode(child, snapshot_id, document_identifier,
-                                  main_frame_data, max_nodes, visited_nodes,
-                                  generated_node_id, truncated));
+      children.Append(BuildBuaPageSnapshotNode(
+          child, snapshot_id, document_identifier, main_frame_data, max_nodes,
+          visited_nodes, generated_node_id, truncated));
     }
     if (!children.empty()) {
       out.Set("children", std::move(children));
@@ -771,22 +1186,21 @@ base::DictValue BuildFallbackContent(std::string snapshot_id,
     base::DictValue frame;
     frame.Set("main", true);
     frame.Set("url", context.tab_data->url.spec());
-    frame.Set("origin",
-              url::Origin::Create(context.tab_data->url).Serialize());
+    frame.Set("origin", url::Origin::Create(context.tab_data->url).Serialize());
     if (context.tab_data->title) {
       frame.Set("title", *context.tab_data->title);
     }
     content.Set("frame", std::move(frame));
   }
   if (context.web_page_data) {
-    content.Set("text",
-                context.web_page_data->main_document->inner_text);
+    content.Set("text", context.web_page_data->main_document->inner_text);
   }
   return content;
 }
 
 base::DictValue BuildSnapshotFromTabContext(
     std::string snapshot_id,
+    std::string snapshot_mode,
     int generation,
     const glic::mojom::TabContext& context,
     content::WebContents* web_contents,
@@ -794,8 +1208,7 @@ base::DictValue BuildSnapshotFromTabContext(
   base::DictValue page;
   if (context.tab_data) {
     page.Set("url", context.tab_data->url.spec());
-    page.Set("origin",
-             url::Origin::Create(context.tab_data->url).Serialize());
+    page.Set("origin", url::Origin::Create(context.tab_data->url).Serialize());
     if (context.tab_data->title) {
       page.Set("title", *context.tab_data->title);
     }
@@ -816,9 +1229,8 @@ base::DictValue BuildSnapshotFromTabContext(
   std::optional<apc::AnnotatedPageContent> annotated_page_content;
   if (context.annotated_page_data &&
       context.annotated_page_data->annotated_page_content) {
-    annotated_page_content =
-        context.annotated_page_data->annotated_page_content
-            ->As<apc::AnnotatedPageContent>();
+    annotated_page_content = context.annotated_page_data->annotated_page_content
+                                 ->As<apc::AnnotatedPageContent>();
   }
 
   if (annotated_page_content && annotated_page_content->has_root_node()) {
@@ -833,10 +1245,10 @@ base::DictValue BuildSnapshotFromTabContext(
     }
     int visited_nodes = 0;
     int generated_node_id = 0;
-    content = BuildApcNode(annotated_page_content->root_node(), snapshot_id,
-                           document_identifier, main_frame_data, max_nodes,
-                           &visited_nodes, &generated_node_id,
-                           &content_truncated);
+    content = BuildBuaPageSnapshotNode(
+        annotated_page_content->root_node(), snapshot_id, document_identifier,
+        main_frame_data, max_nodes, &visited_nodes, &generated_node_id,
+        &content_truncated);
     content_available = true;
 
     if (annotated_page_content->has_viewport_geometry()) {
@@ -857,7 +1269,9 @@ base::DictValue BuildSnapshotFromTabContext(
   content_quality.Set("available", content_available);
   content_quality.Set("truncated", content_truncated);
   if (!content_available) {
-    content_quality.Set("error", "Glic did not return annotated page content.");
+    content_quality.Set(
+        "error",
+        "BUA snapshot backend did not return BuaPageSnapshot content.");
     quality.Set("partial", true);
   }
   quality.Set("content", std::move(content_quality));
@@ -886,17 +1300,26 @@ base::DictValue BuildSnapshotFromTabContext(
 
   base::DictValue snapshot;
   snapshot.Set("id", snapshot_id);
+  snapshot.Set("mode", std::move(snapshot_mode));
   snapshot.Set("source", "explicit");
   snapshot.Set("createdAtMs", static_cast<double>(NowMs()));
   snapshot.Set("generation", generation);
   if (context.tab_data) {
-    snapshot.Set("target",
-                 BuildTargetSnapshotFromTabData(*context.tab_data));
+    snapshot.Set("target", BuildTargetSnapshotFromTabData(*context.tab_data));
   }
   snapshot.Set("page", std::move(page));
+
+  if (context.web_page_data && context.web_page_data->main_document) {
+    base::DictValue text;
+    text.Set("innerText",
+             context.web_page_data->main_document->inner_text);
+    snapshot.Set("text", std::move(text));
+  }
+
   snapshot.Set("content", std::move(content));
 
-  if (annotated_page_content && annotated_page_content->has_viewport_geometry()) {
+  if (annotated_page_content &&
+      annotated_page_content->has_viewport_geometry()) {
     const apc::BoundingRect& viewport =
         annotated_page_content->viewport_geometry();
     base::DictValue viewport_value;
@@ -913,16 +1336,14 @@ base::DictValue BuildSnapshotFromTabContext(
   }
 
   if (context.viewport_screenshot) {
-    const glic::mojom::Screenshot& screenshot =
-        *context.viewport_screenshot;
+    const glic::mojom::Screenshot& screenshot = *context.viewport_screenshot;
     base::DictValue screenshot_value;
     screenshot_value.Set("id", snapshot_id + ":screenshot");
     screenshot_value.Set("width", static_cast<int>(screenshot.width_pixels));
     screenshot_value.Set("height", static_cast<int>(screenshot.height_pixels));
     screenshot_value.Set("mimeType", screenshot.mime_type);
-    screenshot_value.Set(
-        "uri", "data:" + screenshot.mime_type + ";base64," +
-                   base::Base64Encode(screenshot.data));
+    screenshot_value.Set("uri", "data:" + screenshot.mime_type + ";base64," +
+                                    base::Base64Encode(screenshot.data));
     snapshot.Set("screenshot", std::move(screenshot_value));
   }
 
@@ -946,11 +1367,11 @@ base::DictValue UnsupportedActionResult(std::string action_id,
   return result;
 }
 
-std::string ActorCodeString(actor::mojom::ActionResultCode code) {
-  return "actor:" + base::NumberToString(static_cast<int>(code));
+std::string BuaActionCodeString(actor::mojom::ActionResultCode code) {
+  return "bua_action:" + base::NumberToString(static_cast<int>(code));
 }
 
-std::string ActorStatus(actor::mojom::ActionResultCode code) {
+std::string BuaActionStatus(actor::mojom::ActionResultCode code) {
   switch (code) {
     case actor::mojom::ActionResultCode::kOk:
       return "succeeded";
@@ -963,7 +1384,7 @@ std::string ActorStatus(actor::mojom::ActionResultCode code) {
   }
 }
 
-std::string ActorCategory(actor::mojom::ActionResultCode code) {
+std::string BuaActionCategory(actor::mojom::ActionResultCode code) {
   switch (code) {
     case actor::mojom::ActionResultCode::kArgumentsInvalid:
     case actor::mojom::ActionResultCode::kInvalidDomNodeId:
@@ -996,7 +1417,7 @@ std::string ActorCategory(actor::mojom::ActionResultCode code) {
   }
 }
 
-base::DictValue BuildActorActionResult(
+base::DictValue BuildBuaActionResult(
     const std::vector<std::string>& action_ids,
     base::TimeTicks start_time,
     std::vector<actor::ActionResultWithLatencyInfo> action_results) {
@@ -1012,12 +1433,11 @@ base::DictValue BuildActorActionResult(
 
   base::DictValue result;
   result.Set("ok", actor::IsOk(result_code));
-  result.Set("status", ActorStatus(result_code));
-  result.Set("actionId",
-             action_ids.empty() ? std::string("bua-action")
-                                : action_ids[action_index]);
-  result.Set("code", ActorCodeString(result_code));
-  result.Set("category", ActorCategory(result_code));
+  result.Set("status", BuaActionStatus(result_code));
+  result.Set("actionId", action_ids.empty() ? std::string("bua-action")
+                                            : action_ids[action_index]);
+  result.Set("code", BuaActionCodeString(result_code));
+  result.Set("category", BuaActionCategory(result_code));
   if (failed_index) {
     result.Set("failedActionIndex", static_cast<int>(*failed_index));
   }
@@ -1029,19 +1449,18 @@ base::DictValue BuildActorActionResult(
 
   base::DictValue timing;
   timing.Set("endedAtMs", static_cast<double>(NowMs()));
-  timing.Set("elapsedMs",
-             static_cast<int>(
-                 (base::TimeTicks::Now() - start_time).InMilliseconds()));
+  timing.Set(
+      "elapsedMs",
+      static_cast<int>((base::TimeTicks::Now() - start_time).InMilliseconds()));
   base::ListValue phases;
   for (size_t i = 0; i < action_results.size(); ++i) {
     base::DictValue phase;
-    phase.Set("name", action_ids.size() > i ? action_ids[i]
-                                            : base::StringPrintf("action:%zu",
-                                                                 i));
-    phase.Set("elapsedMs",
-              static_cast<int>((action_results[i].end_time -
-                                action_results[i].start_time)
-                                   .InMilliseconds()));
+    phase.Set("name", action_ids.size() > i
+                          ? action_ids[i]
+                          : base::StringPrintf("action:%zu", i));
+    phase.Set("elapsedMs", static_cast<int>((action_results[i].end_time -
+                                             action_results[i].start_time)
+                                                .InMilliseconds()));
     phases.Append(std::move(phase));
   }
   timing.Set("phases", std::move(phases));
@@ -1049,8 +1468,9 @@ base::DictValue BuildActorActionResult(
 
   base::DictValue diagnostic;
   diagnostic.Set("severity", actor::IsOk(result_code) ? "info" : "warning");
-  diagnostic.Set("category", "actor");
-  diagnostic.Set("message", "ActorKeyedService executed the action sequence.");
+  diagnostic.Set("category", "actuation");
+  diagnostic.Set("message",
+                 "BUA actuation backend executed the action sequence.");
   diagnostic.Set("actionResultCode", static_cast<int>(result_code));
   base::ListValue diagnostics;
   diagnostics.Append(std::move(diagnostic));
@@ -1065,9 +1485,9 @@ bool FillPointTarget(const base::DictValue& point,
   std::optional<double> x = point.FindDouble("x");
   std::optional<double> y = point.FindDouble("y");
   if (!x || !y || !std::isfinite(*x) || !std::isfinite(*y)) {
-    *error_json = Error("invalid_request",
-                        "Action point target requires finite x and y.",
-                        "input");
+    *error_json =
+        Error("invalid_request", "Action point target requires finite x and y.",
+              "input");
     return false;
   }
   target->mutable_coordinate()->set_x(static_cast<int>(*x));
@@ -1080,11 +1500,11 @@ bool FillActionTarget(const base::DictValue& target_dict,
                       content::RenderFrameHost& render_frame_host,
                       std::string* error_json) {
   if (const std::string* node_id = target_dict.FindString("nodeId")) {
-    std::optional<ApcNodeRef> node_ref = DecodeApcNodeId(*node_id);
+    std::optional<BuaPageNodeRef> node_ref = DecodeBuaPageNodeId(*node_id);
     if (!node_ref) {
       *error_json =
           Error("invalid_request",
-                "nodeId is not a BUA APC node id from snapshot().",
+                "nodeId is not a BuaPageSnapshot node id from snapshot().",
                 "input");
       return false;
     }
@@ -1107,9 +1527,8 @@ bool FillActionTarget(const base::DictValue& target_dict,
     return false;
   }
 
-  *error_json =
-      Error("invalid_request", "Action target requires nodeId or point.",
-            "input");
+  *error_json = Error("invalid_request",
+                      "Action target requires nodeId or point.", "input");
   return false;
 }
 
@@ -1127,6 +1546,7 @@ const base::DictValue* RequiredTarget(const base::DictValue& action,
 bool AppendBuaActionToProto(const base::DictValue& action,
                             int action_index,
                             tabs::TabInterface* default_tab,
+                            content::BrowserContext* browser_context,
                             content::RenderFrameHost& render_frame_host,
                             apc::Actions* actions_proto,
                             std::vector<std::string>* action_ids,
@@ -1145,7 +1565,7 @@ bool AppendBuaActionToProto(const base::DictValue& action,
   int32_t tab_id = tabs::TabHandle::Null().raw_value();
   if (kind != "tab") {
     std::optional<int32_t> resolved_tab_id =
-        ResolveActionTabId(action, default_tab, error_json);
+        ResolveActionTabId(action, default_tab, browser_context, error_json);
     if (!resolved_tab_id) {
       return false;
     }
@@ -1164,9 +1584,8 @@ bool AppendBuaActionToProto(const base::DictValue& action,
     }
     const std::string button =
         FindStringMember(action, "button").value_or("left");
-    click->set_click_type(button == "right"
-                              ? apc::ClickAction_ClickType_RIGHT
-                              : apc::ClickAction_ClickType_LEFT);
+    click->set_click_type(button == "right" ? apc::ClickAction_ClickType_RIGHT
+                                            : apc::ClickAction_ClickType_LEFT);
     click->set_click_count(action.FindInt("count").value_or(1) == 2
                                ? apc::ClickAction_ClickCount_DOUBLE
                                : apc::ClickAction_ClickCount_SINGLE);
@@ -1270,9 +1689,9 @@ bool AppendBuaActionToProto(const base::DictValue& action,
     }
     const GURL url(*url_string);
     if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
-      *error_json = Error(
-          "invalid_request",
-          "navigate action only accepts valid HTTP(S) URLs.", "navigation");
+      *error_json = Error("invalid_request",
+                          "navigate action only accepts valid HTTP(S) URLs.",
+                          "navigation");
       return false;
     }
     apc::NavigateAction* navigate = proto_action->mutable_navigate();
@@ -1288,7 +1707,7 @@ bool AppendBuaActionToProto(const base::DictValue& action,
     } else {
       *error_json = SuccessDict(UnsupportedActionResult(
           action_id, action_index, kind,
-          "history.reload is not supported by Actor actions yet."));
+          "history.reload is not supported by BUA actions yet."));
       return false;
     }
   } else if (kind == "wait") {
@@ -1321,8 +1740,7 @@ bool AppendBuaActionToProto(const base::DictValue& action,
           target_tab_id ? ParseTabId(*target_tab_id) : std::nullopt;
       if (!parsed_tab_id) {
         *error_json = Error("invalid_request",
-                            "tab activate requires targetRef.tabId.",
-                            "input");
+                            "tab activate requires targetRef.tabId.", "input");
         return false;
       }
       proto_action->mutable_activate_tab()->set_tab_id(*parsed_tab_id);
@@ -1333,9 +1751,8 @@ bool AppendBuaActionToProto(const base::DictValue& action,
       std::optional<int32_t> parsed_tab_id =
           target_tab_id ? ParseTabId(*target_tab_id) : std::nullopt;
       if (!parsed_tab_id) {
-        *error_json =
-            Error("invalid_request", "tab close requires targetRef.tabId.",
-                  "input");
+        *error_json = Error("invalid_request",
+                            "tab close requires targetRef.tabId.", "input");
         return false;
       }
       proto_action->mutable_close_tab()->set_tab_id(*parsed_tab_id);
@@ -1348,7 +1765,7 @@ bool AppendBuaActionToProto(const base::DictValue& action,
   } else {
     *error_json = SuccessDict(UnsupportedActionResult(
         action_id, action_index, kind,
-        "BUA action is not wired to Actor in this build."));
+        "BUA action backend is unavailable in this build."));
     return false;
   }
 
@@ -1378,8 +1795,8 @@ glic::mojom::GetTabContextOptions BuildSnapshotOptions(
   const base::DictValue* options = request.FindDict("options");
   const base::DictValue* channels =
       options ? options->FindDict("channels") : nullptr;
-  const base::DictValue* budget = options ? options->FindDict("budget")
-                                          : nullptr;
+  const base::DictValue* budget =
+      options ? options->FindDict("budget") : nullptr;
 
   const bool include_content =
       channels ? channels->FindBool("content").value_or(true) : true;
@@ -1390,11 +1807,10 @@ glic::mojom::GetTabContextOptions BuildSnapshotOptions(
 
   glic::mojom::GetTabContextOptions context_options;
   context_options.include_inner_text = true;
-  context_options.inner_text_bytes_limit =
-      static_cast<uint32_t>(std::max(
-          1, budget ? budget->FindInt("maxTextBytes").value_or(
-                          kDefaultInnerTextBytesLimit)
-                    : kDefaultInnerTextBytesLimit));
+  context_options.inner_text_bytes_limit = static_cast<uint32_t>(
+      std::max(1, budget ? budget->FindInt("maxTextBytes")
+                               .value_or(kDefaultInnerTextBytesLimit)
+                         : kDefaultInnerTextBytesLimit));
   context_options.include_viewport_screenshot = include_screenshot;
   context_options.include_annotated_page_content = include_content;
   context_options.max_meta_tags = 32;
@@ -1403,7 +1819,7 @@ glic::mojom::GetTabContextOptions BuildSnapshotOptions(
       budget ? budget->FindInt("maxBytes").value_or(kDefaultPdfBytesLimit)
              : kDefaultPdfBytesLimit);
   context_options.annotated_page_content_mode =
-      apc::ANNOTATED_PAGE_CONTENT_MODE_ACTIONABLE_ELEMENTS;
+      ApcModeForSnapshotMode(SnapshotModeFromRequest(request));
 
   if (budget) {
     int max_width = budget->FindInt("maxScreenshotWidth").value_or(0);
@@ -1416,11 +1832,10 @@ glic::mojom::GetTabContextOptions BuildSnapshotOptions(
     }
   }
   context_options.screenshot_collection_options.screenshot_image_format =
-      page_content_annotations::ScreenshotOptions::ScreenshotImageFormat::
-          kJpeg;
+      page_content_annotations::ScreenshotOptions::ScreenshotImageFormat::kJpeg;
   context_options.screenshot_collection_options.screenshot_compression_quality =
-      page_content_annotations::ScreenshotOptions::ScreenshotCompressionQuality::
-          kMedium;
+      page_content_annotations::ScreenshotOptions::
+          ScreenshotCompressionQuality::kMedium;
   return context_options;
 }
 
@@ -1465,10 +1880,22 @@ content::WebContents* BuaDocumentService::GetWebContents() const {
   return content::WebContents::FromRenderFrameHost(&render_frame_host());
 }
 
-tabs::TabInterface* BuaDocumentService::GetCurrentTab() const {
+tabs::TabInterface* BuaDocumentService::GetRequestingTab() const {
   content::WebContents* web_contents = GetWebContents();
   return web_contents ? tabs::TabInterface::MaybeGetFromContents(web_contents)
                       : nullptr;
+}
+
+tabs::TabInterface* BuaDocumentService::GetDefaultTargetTab() const {
+  content::BrowserContext* browser_context =
+      render_frame_host().GetBrowserContext();
+  content::WebContents* web_contents = GetWebContents();
+  tabs::TabInterface* requesting_tab = GetRequestingTab();
+  if (IsUsableDefaultTargetTab(requesting_tab, browser_context, web_contents)) {
+    return requesting_tab;
+  }
+
+  return FindDefaultTabForProfile(browser_context, web_contents);
 }
 
 glic::GlicKeyedService* BuaDocumentService::GetGlicService() const {
@@ -1477,8 +1904,7 @@ glic::GlicKeyedService* BuaDocumentService::GetGlicService() const {
 }
 
 actor::ActorKeyedService* BuaDocumentService::GetActorService() const {
-  return actor::ActorKeyedService::Get(
-      render_frame_host().GetBrowserContext());
+  return actor::ActorKeyedService::Get(render_frame_host().GetBrowserContext());
 }
 
 std::optional<actor::TaskId> BuaDocumentService::EnsureActorTask(
@@ -1487,8 +1913,7 @@ std::optional<actor::TaskId> BuaDocumentService::EnsureActorTask(
   if (!actor_service) {
     *error_json =
         Error("backend_unavailable",
-              "ActorKeyedService is unavailable. Enable the Glic Actor "
-              "backend before using BUA act().",
+              "BUA actuation backend is unavailable before using act().",
               "backend_error");
     return std::nullopt;
   }
@@ -1501,8 +1926,8 @@ std::optional<actor::TaskId> BuaDocumentService::EnsureActorTask(
   if (!glic_service || !glic_service->HasActorPolicyChecker()) {
     *error_json =
         Error("backend_unavailable",
-              "GlicActorPolicyChecker is unavailable, so BUA cannot create "
-              "a real Actor task.",
+              "BUA actuation policy checker is unavailable, so BUA cannot "
+              "create a real browser-use task.",
               "backend_error");
     return std::nullopt;
   }
@@ -1510,9 +1935,10 @@ std::optional<actor::TaskId> BuaDocumentService::EnsureActorTask(
   glic::GlicActorPolicyChecker& policy_checker =
       glic_service->actor_policy_checker();
   if (!policy_checker.CanActOnWeb()) {
-    *error_json = Error("act_blocked_by_policy",
-                        "Glic actor policy denied act-on-web.",
-                        "permission_policy");
+    *error_json =
+        Error("act_blocked_by_policy",
+              "BUA actuation policy denied act-on-web.",
+              "permission_policy");
     return std::nullopt;
   }
 
@@ -1522,7 +1948,8 @@ std::optional<actor::TaskId> BuaDocumentService::EnsureActorTask(
       &policy_checker);
   if (!actor_task_id_ || actor_task_id_->is_null()) {
     *error_json =
-        Error("create_task_failed", "ActorKeyedService did not create a task.",
+        Error("create_task_failed",
+              "BUA actuation backend did not create a task.",
               "task_state");
     actor_task_id_.reset();
     return std::nullopt;
@@ -1531,8 +1958,7 @@ std::optional<actor::TaskId> BuaDocumentService::EnsureActorTask(
   return actor_task_id_;
 }
 
-void BuaDocumentService::StopActorTask(
-    actor::ActorTask::StoppedReason reason) {
+void BuaDocumentService::StopActorTask(actor::ActorTask::StoppedReason reason) {
   if (!actor_task_id_) {
     return;
   }
@@ -1546,29 +1972,29 @@ void BuaDocumentService::StopActorTask(
 
 void BuaDocumentService::HandleSnapshot(const base::DictValue& request,
                                         RequestCallback callback) {
-  tabs::TabInterface* tab = GetCurrentTab();
+  content::BrowserContext* browser_context =
+      render_frame_host().GetBrowserContext();
+  tabs::TabInterface* tab = GetDefaultTargetTab();
 
   std::string error_json;
-  tab = ResolveTargetTabOrCurrent(request, tab, &error_json);
+  tab = ResolveTargetTabOrDefault(request, tab, browser_context, &error_json);
   if (!tab) {
     std::move(callback).Run(
-        error_json.empty()
-            ? Error("no_target",
-                    "snapshot() requires target.tabId when BUA is not running "
-                    "in a browser tab.",
-                    "target_not_found")
-            : std::move(error_json));
+        error_json.empty() ? NoDefaultTargetError(browser_context, "snapshot()")
+                           : std::move(error_json));
     return;
   }
 
   const std::string snapshot_id =
       std::string("snapshot-") + base::NumberToString(NowMs());
+  const std::string snapshot_mode = SnapshotModeFromRequest(request);
   const int generation = ++snapshot_generation_;
   glic::FetchPageContext(
       tab, BuildSnapshotOptions(request),
       base::BindOnce(&BuaDocumentService::OnSnapshot,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback),
-                     snapshot_id, generation, SnapshotMaxNodes(request)),
+                     snapshot_id, snapshot_mode, generation,
+                     SnapshotMaxNodes(request)),
       /*progress_listener=*/nullptr,
       /*is_screenshot_annotated=*/false);
 }
@@ -1576,35 +2002,46 @@ void BuaDocumentService::HandleSnapshot(const base::DictValue& request,
 void BuaDocumentService::OnSnapshot(
     RequestCallback callback,
     std::string snapshot_id,
+    std::string snapshot_mode,
     int generation,
     int max_nodes,
-    base::expected<
-        glic::mojom::GetContextResultPtr,
-        page_content_annotations::FetchPageContextErrorDetails> result) {
+    base::expected<glic::mojom::GetContextResultPtr,
+                   page_content_annotations::FetchPageContextErrorDetails>
+        result) {
   if (!result.has_value()) {
-    std::move(callback).Run(Error("snapshot_failed", result.error().message,
-                                  "backend_error"));
+    std::move(callback).Run(
+        Error("snapshot_failed", result.error().message, "backend_error"));
     return;
   }
 
   if (!result.value()->is_tab_context()) {
-    std::move(callback).Run(
-        Error("snapshot_failed",
-              result.value()->is_error_reason()
-                  ? result.value()->get_error_reason()
-                  : "Glic did not return tab context.",
-              "backend_error"));
+    std::move(callback).Run(Error("snapshot_failed",
+                                  result.value()->is_error_reason()
+                                      ? result.value()->get_error_reason()
+                                      : "BUA snapshot backend did not return "
+                                        "page context.",
+                                  "backend_error"));
     return;
   }
 
   std::move(callback).Run(SuccessDict(BuildSnapshotFromTabContext(
-      std::move(snapshot_id), generation, *result.value()->get_tab_context(),
-      GetWebContents(), max_nodes)));
+      std::move(snapshot_id), std::move(snapshot_mode), generation,
+      *result.value()->get_tab_context(), /*web_contents=*/nullptr,
+      max_nodes)));
 }
 
 void BuaDocumentService::HandleAct(const base::DictValue& request,
                                    RequestCallback callback) {
-  tabs::TabInterface* tab = GetCurrentTab();
+  content::BrowserContext* browser_context =
+      render_frame_host().GetBrowserContext();
+  tabs::TabInterface* tab = GetDefaultTargetTab();
+
+  std::string error_json;
+  tab = ResolveTargetTabOrDefault(request, tab, browser_context, &error_json);
+  if (!tab && !error_json.empty()) {
+    std::move(callback).Run(std::move(error_json));
+    return;
+  }
 
   const base::ListValue* actions = request.FindList("actions");
   if (!actions || actions->empty()) {
@@ -1613,7 +2050,37 @@ void BuaDocumentService::HandleAct(const base::DictValue& request,
     return;
   }
 
-  std::string error_json;
+  if (!tab && actions->size() == 1) {
+    const base::DictValue* action = (*actions)[0].GetIfDict();
+    if (!action) {
+      std::move(callback).Run(
+          Error("invalid_request", "Each action must be an object.", "input"));
+      return;
+    }
+    if (NavigateActionCanCreateTab(*action)) {
+      std::optional<GURL> url = NavigateUrlFromAction(*action, &error_json);
+      if (!url) {
+        std::move(callback).Run(std::move(error_json));
+        return;
+      }
+      const base::TimeTicks start_time = base::TimeTicks::Now();
+      tabs::TabInterface* created_tab =
+          CreateTabForProfile(browser_context, *url, /*background=*/false,
+                              std::nullopt, &error_json);
+      if (!created_tab) {
+        std::move(callback).Run(std::move(error_json));
+        return;
+      }
+      std::move(callback).Run(SuccessDict(
+          BuildCreatedTabNavigateResult(*action, created_tab, start_time)));
+      return;
+    }
+  }
+  if (!tab) {
+    std::move(callback).Run(NoDefaultTargetError(browser_context, "Action"));
+    return;
+  }
+
   std::optional<actor::TaskId> task_id = EnsureActorTask(&error_json);
   if (!task_id) {
     std::move(callback).Run(std::move(error_json));
@@ -1633,7 +2100,7 @@ void BuaDocumentService::HandleAct(const base::DictValue& request,
           Error("invalid_request", "Each action must be an object.", "input"));
       return;
     }
-    if (!AppendBuaActionToProto(*action, action_index, tab,
+    if (!AppendBuaActionToProto(*action, action_index, tab, browser_context,
                                 render_frame_host(), &actions_proto,
                                 &action_ids, &error_json)) {
       std::move(callback).Run(std::move(error_json));
@@ -1649,22 +2116,22 @@ void BuaDocumentService::HandleAct(const base::DictValue& request,
     base::DictValue result;
     result.Set("ok", false);
     result.Set("status", "failed");
-    result.Set("actionId",
-               action_ids.size() > error.first ? action_ids[error.first]
-                                               : "bua-action");
+    result.Set("actionId", action_ids.size() > error.first
+                               ? action_ids[error.first]
+                               : "bua-action");
     result.Set("failedActionIndex", static_cast<int>(error.first));
-    result.Set("code", ActorCodeString(error.second));
-    result.Set("category", ActorCategory(error.second));
-    result.Set("message", "Actor rejected the action proto.");
+    result.Set("code", BuaActionCodeString(error.second));
+    result.Set("category", BuaActionCategory(error.second));
+    result.Set("message", "BUA actuation backend rejected the action proto.");
     std::move(callback).Run(SuccessDict(std::move(result)));
     return;
   }
 
   actor::ActorKeyedService* actor_service = GetActorService();
   if (!actor_service) {
-    std::move(callback).Run(
-        Error("backend_unavailable", "ActorKeyedService went away.",
-              "backend_error"));
+    std::move(callback).Run(Error("backend_unavailable",
+                                  "BUA actuation backend went away.",
+                                  "backend_error"));
     return;
   }
 
@@ -1696,8 +2163,9 @@ void BuaDocumentService::Request(const std::string& method,
     return;
   }
 
-  tabs::TabInterface* tab = GetCurrentTab();
-  content::WebContents* web_contents = GetWebContents();
+  content::BrowserContext* browser_context =
+      render_frame_host().GetBrowserContext();
+  tabs::TabInterface* tab = GetDefaultTargetTab();
   glic::GlicKeyedService* glic_service = GetGlicService();
   actor::ActorKeyedService* actor_service = GetActorService();
   const bool has_policy_checker =
@@ -1727,9 +2195,9 @@ void BuaDocumentService::Request(const std::string& method,
   }
 
   if (method == "availability.current") {
-    std::move(callback).Run(SuccessDict(BuildAvailability(
-        !!tab, !!glic_service, !!actor_service, has_policy_checker,
-        can_act_on_web)));
+    std::move(callback).Run(
+        SuccessDict(BuildAvailability(!!tab, !!glic_service, !!actor_service,
+                                      has_policy_checker, can_act_on_web)));
     return;
   }
 
@@ -1744,14 +2212,37 @@ void BuaDocumentService::Request(const std::string& method,
   }
 
   if (method == "targets.current") {
-    std::move(callback).Run(
-        SuccessDict(BuildTargetSnapshot(tab, web_contents)));
+    if (tab) {
+      std::move(callback).Run(SuccessDict(BuildTargetSnapshotFromTab(tab)));
+    } else if (HasBrowserForProfile(browser_context)) {
+      std::move(callback).Run(SuccessDict(BuildNoTargetState(
+          "no_focusable_target",
+          "Chrome has a browser window for this profile, but no tab is "
+          "available as the default BUA target.")));
+    } else {
+      std::move(callback).Run(SuccessDict(BuildNoTargetState(
+          "no_browser",
+          "Chrome has no normal browser window for this profile.")));
+    }
     return;
   }
 
   if (method == "targets.list") {
-    base::ListValue targets;
-    targets.Append(BuildTargetSnapshot(tab, web_contents));
+    const base::DictValue* options = request->FindDict("options");
+    std::optional<int32_t> window_id;
+    if (const std::string* window_id_string =
+            options ? options->FindString("windowId") : nullptr) {
+      window_id = ParseWindowId(*window_id_string);
+      if (!window_id) {
+        std::move(callback).Run(
+            Error("invalid_request", "options.windowId is invalid.", "input"));
+        return;
+      }
+    }
+    const bool include_background =
+        options ? options->FindBool("includeBackground").value_or(true) : true;
+    base::ListValue targets = BuildTargetListForProfile(
+        browser_context, window_id, include_background);
     std::move(callback).Run(Success(base::Value(std::move(targets))));
     return;
   }
@@ -1760,69 +2251,70 @@ void BuaDocumentService::Request(const std::string& method,
     const base::DictValue* options = request->FindDict("options");
     const std::string* url_string =
         options ? options->FindString("url") : nullptr;
-    if (!url_string) {
-      std::move(callback).Run(
-          Error("invalid_request", "targets.createTab requires url.", "input"));
-      return;
-    }
-    const GURL url(*url_string);
-    if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
+    const GURL url(url_string ? *url_string : std::string("about:blank"));
+    if (!IsCreateTabUrlAllowed(url)) {
       std::move(callback).Run(
           Error("invalid_request",
-                "targets.createTab only accepts valid HTTP(S) URLs.", "input"));
-      return;
-    }
-    if (!glic_service) {
-      std::move(callback).Run(
-          Error("backend_unavailable", "GlicKeyedService is unavailable.",
-                "backend_error"));
+                "targets.createTab only accepts valid HTTP(S) URLs or "
+                "about:blank.",
+                "input"));
       return;
     }
 
     const bool background =
         options ? options->FindBool("background").value_or(false) : false;
-    glic_service->CreateTab(
-        url, background, std::nullopt,
-        base::BindOnce(
-            [](RequestCallback callback, glic::mojom::TabDataPtr tab_data) {
-              if (!tab_data) {
-                std::move(callback).Run(Error(
-                    "create_tab_failed",
-                    "GlicKeyedService did not create a tab.", "browser_state"));
-                return;
-              }
-              std::move(callback).Run(
-                  SuccessDict(BuildTargetSnapshotFromTabData(*tab_data)));
-            },
-            std::move(callback)));
+    std::optional<int32_t> window_id;
+    if (const std::string* window_id_string =
+            options ? options->FindString("windowId") : nullptr) {
+      window_id = ParseWindowId(*window_id_string);
+      if (!window_id) {
+        std::move(callback).Run(
+            Error("invalid_request", "options.windowId is invalid.", "input"));
+        return;
+      }
+    }
+    std::string error_json;
+    tabs::TabInterface* created_tab = CreateTabForProfile(
+        browser_context, url, background, window_id, &error_json);
+    if (!created_tab) {
+      std::move(callback).Run(std::move(error_json));
+      return;
+    }
+    std::move(callback).Run(
+        SuccessDict(BuildTargetSnapshotFromTab(created_tab)));
     return;
   }
 
   if (method == "targets.activate" || method == "targets.close") {
     const base::DictValue* target = request->FindDict("target");
-    const std::string* target_tab_id =
-        target ? target->FindString("tabId") : nullptr;
-    std::optional<int32_t> parsed_tab_id =
-        target_tab_id ? ParseTabId(*target_tab_id) : std::nullopt;
-    if (!parsed_tab_id) {
+    if (!target) {
       std::move(callback).Run(
-          Error("invalid_request", "target.tabId is required.", "input"));
+          Error("invalid_request", "target is required.", "input"));
       return;
     }
 
-    base::DictValue action;
-    action.Set("kind", "tab");
-    action.Set("operation",
-               method == "targets.activate" ? "activate" : "close");
-    base::DictValue target_ref;
-    target_ref.Set("tabId", *target_tab_id);
-    action.Set("targetRef", std::move(target_ref));
-
-    base::ListValue actions;
-    actions.Append(std::move(action));
-    base::DictValue act_request;
-    act_request.Set("actions", std::move(actions));
-    HandleAct(act_request, std::move(callback));
+    std::string error_json;
+    tabs::TabInterface* target_tab =
+        ResolveTargetRef(*target, tab, browser_context, &error_json);
+    if (!target_tab) {
+      std::move(callback).Run(std::move(error_json));
+      return;
+    }
+    if (method == "targets.activate") {
+      BrowserWindowInterface* browser = target_tab->GetBrowserWindowInterface();
+      TabListInterface* tab_list =
+          browser ? TabListInterface::From(browser) : nullptr;
+      if (!tab_list) {
+        std::move(callback).Run(Error(
+            "backend_unavailable",
+            "target tab does not expose an owning tab list.", "backend_error"));
+        return;
+      }
+      tab_list->ActivateTab(target_tab->GetHandle());
+    } else {
+      target_tab->Close();
+    }
+    std::move(callback).Run(SuccessDict(base::DictValue()));
     return;
   }
 
@@ -1841,9 +2333,8 @@ void BuaDocumentService::Request(const std::string& method,
   if (method == "task.state") {
     bool has_task = actor_task_id_ && actor_service &&
                     actor_service->GetTask(*actor_task_id_);
-    std::move(callback).Run(
-        SuccessDict(BuildTaskState(session_id_, has_task,
-                                   has_task ? "running" : "idle")));
+    std::move(callback).Run(SuccessDict(
+        BuildTaskState(session_id_, has_task, has_task ? "running" : "idle")));
     return;
   }
 
@@ -1878,11 +2369,12 @@ void BuaDocumentService::Request(const std::string& method,
     diagnostic.Set("category", "adapter");
     diagnostic.Set(
         "message",
-        "BUA native bridge is active. snapshot() uses Glic page context; "
-        "act() uses ActorKeyedService when available.");
-    diagnostic.Set("hasGlicService", !!glic_service);
-    diagnostic.Set("hasActorService", !!actor_service);
-    diagnostic.Set("hasPolicyChecker", has_policy_checker);
+        "BUA native bridge is active. Targets are resolved through Chrome's "
+        "tab model; snapshot() returns BuaPageSnapshot; act() uses the BUA "
+        "actuation backend when available.");
+    diagnostic.Set("hasSnapshotBackend", !!glic_service);
+    diagnostic.Set("hasActuationBackend", !!actor_service);
+    diagnostic.Set("hasActuationPolicy", has_policy_checker);
     diagnostic.Set("canActOnWeb", can_act_on_web);
     diagnostics.Append(std::move(diagnostic));
     std::move(callback).Run(Success(base::Value(std::move(diagnostics))));
@@ -1899,7 +2391,7 @@ void BuaDocumentService::OnActionsFinished(
     base::TimeTicks start_time,
     std::vector<actor::ActionResultWithLatencyInfo> action_results,
     actor::TabObservationStrategy observation_strategy) {
-  std::move(callback).Run(SuccessDict(BuildActorActionResult(
+  std::move(callback).Run(SuccessDict(BuildBuaActionResult(
       action_ids, start_time, std::move(action_results))));
 }
 

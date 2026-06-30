@@ -378,9 +378,13 @@ export interface BuaWindowSnapshot {
   readonly targetIds: readonly BuaId[];
 }
 
-/** 主动读取页面快照时的配置，决定目标、目的、通道和资源预算。 */
+/** 页面内容提取模式，default 偏整体内容，interact 偏可操作元素。 */
+export type BuaSnapshotMode = 'default'|'interact';
+
+/** 主动读取页面快照时的配置，决定目标、模式、目的、通道和资源预算。 */
 export interface BuaSnapshotOptions {
   target?: BuaTargetRef;
+  mode?: BuaSnapshotMode;
   purpose?: 'plan'|'verify'|'recover'|'full'|'fast';
   channels?: BuaSnapshotChannels;
   budget?: BuaSnapshotBudget;
@@ -408,6 +412,7 @@ export interface BuaSnapshotBudget {
 /** 页面快照结果，是 BUA 给 LLM/业务侧的核心页面状态模型。 */
 export interface BuaPageSnapshot {
   readonly id: BuaId;
+  readonly mode: BuaSnapshotMode;
   readonly source: 'explicit'|'after_action'|'resume'|'event';
   readonly createdAtMs: BuaTimestampMs;
   readonly generation: number;
@@ -415,11 +420,19 @@ export interface BuaPageSnapshot {
   readonly target: BuaTargetSnapshot;
   readonly page: BuaPageInfo;
   readonly viewport?: BuaViewport;
+  readonly text?: BuaPageText;
   readonly content?: BuaPageNode;
   readonly screenshot?: BuaScreenshot;
 
   readonly quality: BuaSnapshotQuality;
   readonly diagnostics?: readonly BuaDiagnostic[];
+}
+
+/** 页面文本通道，对齐浏览器页面上下文中的可读文本事实。 */
+export interface BuaPageText {
+  readonly innerText?: string;
+  readonly innerTextOffset?: number;
+  readonly passages?: readonly string[];
 }
 
 /** 页面自身的轻量状态，避免业务侧从 target 中重复推断页面情况。 */
@@ -455,6 +468,7 @@ export interface BuaPageNode {
   readonly bounds?: BuaRect;
   readonly state?: BuaNodeState;
   readonly actions?: readonly BuaActionKind[];
+  readonly scrollInfo?: BuaScrollInfo;
   readonly confidence?: number;
 
   readonly frame?: BuaFrameInfo;
@@ -503,6 +517,14 @@ export interface BuaNodeState {
   readonly pressed?: boolean;
   readonly obscured?: boolean;
   readonly offscreen?: boolean;
+}
+
+/** 可滚动节点的滚动范围和当前可见区域。 */
+export interface BuaScrollInfo {
+  readonly scrollableX?: boolean;
+  readonly scrollableY?: boolean;
+  readonly scrollingBounds?: BuaSize;
+  readonly visibleArea?: BuaRect;
 }
 
 /** frame 信息。根节点 main=true，iframe 子树 main=false。 */
@@ -586,6 +608,12 @@ export interface BuaMediaInfo {
 export interface BuaMediaTranscript {
   readonly text: string;
   readonly startTimeMs?: number;
+}
+
+/** 二维尺寸。 */
+export interface BuaSize {
+  readonly width: number;
+  readonly height: number;
 }
 
 /** 页面坐标矩形，默认使用 viewport 坐标系。 */
@@ -710,7 +738,7 @@ export interface BuaNodeQuery {
 export interface BuaBaseAction {
   readonly id?: BuaId;
   readonly target?: BuaActionTarget;
-  readonly targetTab?: BuaTargetRef;
+  readonly targetRef?: BuaTargetRef;
   readonly timeoutMs?: number;
   readonly metadata?: BuaMetadata;
 }
@@ -808,7 +836,6 @@ export interface BuaTabAction extends BuaBaseAction {
   readonly kind: 'tab';
   readonly operation: 'create'|'activate'|'close';
   readonly url?: string;
-  readonly targetRef?: BuaTargetRef;
 }
 
 /** window 基础操作动作。 */
