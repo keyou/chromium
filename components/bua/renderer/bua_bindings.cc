@@ -98,9 +98,8 @@ constexpr char kBuaFacadeScript[] = R"JS(
       state: () => request('task.state', withSession()),
       pause: (reason) => request('task.pause', withSession({reason})),
       resume: (resumeOptions) => request('task.resume', withSession({options: resumeOptions})),
-      interrupt: (reason) => request('task.interrupt', withSession({reason})),
+      cancel: (reason) => request('task.cancelActions', withSession({reason})),
       stop: (reason) => request('task.stop', withSession({reason})),
-      cancelActions: (reason) => request('task.cancelActions', withSession({reason})),
     });
     const targets = freeze({
       current: () => request('targets.current', withSession()),

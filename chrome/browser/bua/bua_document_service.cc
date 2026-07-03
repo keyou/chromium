@@ -1790,6 +1790,38 @@ base::DictValue BuildTaskState(const std::string& session_id,
   return state;
 }
 
+std::string BuaTaskStatus(actor::ActorTask::State state) {
+  switch (state) {
+    case actor::ActorTask::State::kCreated:
+    case actor::ActorTask::State::kReflecting:
+    case actor::ActorTask::State::kWaitingOnUser:
+      return "idle";
+    case actor::ActorTask::State::kActing:
+      return "acting";
+    case actor::ActorTask::State::kPausedByActor:
+    case actor::ActorTask::State::kPausedByUser:
+      return "paused";
+    case actor::ActorTask::State::kCancelled:
+    case actor::ActorTask::State::kFinished:
+    case actor::ActorTask::State::kFailed:
+      return "stopped";
+  }
+  return "idle";
+}
+
+actor::ActorTask::StoppedReason BuaStoppedReason(std::string_view reason) {
+  if (reason == "completed") {
+    return actor::ActorTask::StoppedReason::kTaskComplete;
+  }
+  if (reason == "cancelled" || reason == "user_requested") {
+    return actor::ActorTask::StoppedReason::kStoppedByUser;
+  }
+  if (reason == "session_closed") {
+    return actor::ActorTask::StoppedReason::kShutdown;
+  }
+  return actor::ActorTask::StoppedReason::kModelError;
+}
+
 glic::mojom::GetTabContextOptions BuildSnapshotOptions(
     const base::DictValue& request) {
   const base::DictValue* options = request.FindDict("options");
@@ -2326,25 +2358,32 @@ void BuaDocumentService::Request(const std::string& method,
       return;
     }
     std::move(callback).Run(
-        SuccessDict(BuildTaskState(session_id_, true, "running")));
+        SuccessDict(BuildTaskState(session_id_, true, "idle")));
     return;
   }
 
   if (method == "task.state") {
-    bool has_task = actor_task_id_ && actor_service &&
-                    actor_service->GetTask(*actor_task_id_);
-    std::move(callback).Run(SuccessDict(
-        BuildTaskState(session_id_, has_task, has_task ? "running" : "idle")));
+    actor::ActorTask* task = actor_task_id_ && actor_service
+                                 ? actor_service->GetTask(*actor_task_id_)
+                                 : nullptr;
+    std::move(callback).Run(SuccessDict(BuildTaskState(
+        session_id_, task != nullptr,
+        task ? BuaTaskStatus(task->GetState()) : "idle")));
     return;
   }
 
   if (method == "task.stop" || method == "session.close") {
-    StopActorTask(actor::ActorTask::StoppedReason::kTaskComplete);
+    const std::string* requested_reason = request->FindString("reason");
+    const std::string reason = method == "session.close"
+                                   ? "session_closed"
+                                   : (requested_reason ? *requested_reason
+                                                       : "completed");
+    StopActorTask(BuaStoppedReason(reason));
     if (method == "task.stop") {
       base::DictValue result;
       result.Set("ok", true);
       result.Set("state",
-                 BuildTaskState(session_id_, false, "stopped", "completed"));
+                 BuildTaskState(session_id_, false, "stopped", reason));
       std::move(callback).Run(SuccessDict(std::move(result)));
     } else {
       std::move(callback).Run(SuccessDict(base::DictValue()));

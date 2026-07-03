@@ -127,16 +127,16 @@ Chromium。
 ## Task API
 
 - `[x]` `task.start`：创建或复用 backend actor task。
-- `[x]` `task.state`：报告基础 running / idle 状态。
+- `[x]` `task.state`：报告基础 idle / acting / paused / stopped 状态。
 - `[x]` `task.stop` 和 `session.close`：停止当前 actor task。
 - `[ ]` `task.pause`：facade 已声明，但 backend unsupported。
 - `[ ]` `task.resume`：facade 已声明，但 backend unsupported。
-- `[ ]` `task.interrupt`：TS API 已声明，但当前 facade / backend 路径未暴露。
-- `[ ]` `task.cancelActions`：facade 已声明，但 backend unsupported。
+- `[ ]` `task.cancel`：facade 已声明，但 backend unsupported。
 - `[~]` `BuaTaskOptions`：除了 session id 和 task 创建外，id / title /
   userGoal / mode / target / timeout / metadata 尚未一致消费。
-- `[~]` `BuaTaskState`：已填充基础 id / status / update time。action-level
-  state 和更丰富的 reason 尚未填充。
+- `[~]` `BuaTaskState`：已填充基础 id / status / update time。status 已按
+  Glic actor API 风格压缩为 idle / acting / paused / stopped；更丰富的
+  reason 尚未填充。
 
 ## User Request API
 

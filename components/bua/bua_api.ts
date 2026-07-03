@@ -9,53 +9,292 @@
  * Business agents should integrate with these interfaces and let backend
  * adapters translate to the underlying technology.
  *
- * 简单使用示例：
+ * Agent 全流程使用示例：
+ *
+ * 示例要点：
+ * - 每个业务任务创建一个 session，并用 task API 标记生命周期。
+ * - 先用 snapshot 读取页面和稳定 nodeId，再用 act 执行动作。
+ * - 用户确认、凭据、文件选择等外部输入通过 user_request 事件实时发布。
+ * - 事件只做旁路观察；主流程仍以 snapshot/act/result 推进。
+ *
+ * `createBuaClient` 由具体 SDK/runtime 提供，`productUi` 代表业务侧 UI。
  *
  * ```ts
- * const client = createBuaClient(adapter);
- * const session = await client.createSession({
- *   defaultSnapshot: {purpose: 'plan'},
- * });
+ * type AgentDecision =
+ *   | {kind: 'act'; actions: readonly BuaAction[]}
+ *   | {kind: 'done'; summary: string}
+ *   | {kind: 'handoff'; message?: string};
  *
- * const availability = await session.availability.current();
- * if (!availability.canReadPage.ok || !availability.canAct.ok) {
- *   throw new Error(availability.canReadPage.reason ?? availability.canAct.reason);
- * }
+ * declare function createBuaClient(adapter: BuaBackendAdapter): BuaClient;
+ * declare const adapter: BuaBackendAdapter;
+ * declare const productUi: {
+ *   confirm(message?: string): Promise<boolean>;
+ *   chooseCredential(
+ *       credentials: readonly BuaCredentialOption[]): Promise<BuaId|undefined>;
+ *   chooseAutofillSuggestions(
+ *       request: BuaAutofillSelectionRequest):
+ *       Promise<BuaAutofillSelectionResponse['selectedSuggestions']>;
+ *   chooseFiles(
+ *       request: BuaFilePickerRequest): Promise<readonly BuaFileRef[]|undefined>;
+ *   waitForUserTakeover(message?: string): Promise<boolean>;
+ * };
  *
- * const snapshot = await session.snapshot({
- *   purpose: 'plan',
- *   channels: {content: true, screenshot: true},
- * });
- *
- * const findNode = (
- *     node: BuaPageNode,
- *     match: (candidate: BuaPageNode) => boolean): BuaPageNode|undefined =>
- *   match(node) ? node :
- *       node.children?.map(child => findNode(child, match)).find(Boolean);
- *
- * const searchBox = snapshot.content &&
- *     findNode(snapshot.content, node =>
- *       node.role === 'textbox' && node.name?.includes('搜索'));
- *
- * if (searchBox) {
- *   const result = await session.act([
- *     {
- *       kind: 'type',
- *       target: {nodeId: searchBox.id},
- *       text: 'Chromium BUA',
- *       submit: true,
+ * async function runBuaAgent(goal: string, startUrl: string): Promise<string> {
+ *   const client = createBuaClient(adapter);
+ *   const capabilities = await client.capabilities();
+ *   const session = await client.createSession({
+ *     metadata: {goal},
+ *     defaultSnapshot: {
+ *       mode: 'interact',
+ *       purpose: 'plan',
+ *       channels: {
+ *         content: capabilities.snapshot.content,
+ *         screenshot: capabilities.snapshot.screenshot,
+ *       },
+ *       budget: {timeoutMs: 5000, maxNodes: 4000, maxTextBytes: 128_000},
  *     },
- *   ], {snapshotAfter: 'auto'});
+ *   });
  *
- *   if (!result.ok && result.pendingRequest) {
- *     await session.requests.respond(result.pendingRequest.id, {
- *       kind: 'user_confirmation',
- *       granted: true,
+ *   const subscriptions = [
+ *     session.availability.onChange(availability => {
+ *       console.debug('BUA availability changed', availability.status);
+ *     }),
+ *     session.on('task_state_changed', event => {
+ *       console.debug('BUA task state', event.value.status);
+ *     }),
+ *     session.on('action_finished', event => {
+ *       console.debug('BUA action result', event.value.status);
+ *     }),
+ *     session.on('user_request', event => {
+ *       void respondToUserRequest(session, event.value);
+ *     }),
+ *   ];
+ *
+ *   let finalSummary = '';
+ *   try {
+ *     const target = await ensureAgentTarget(session, startUrl);
+ *     await session.task.start({
+ *       title: 'BUA agent task',
+ *       userGoal: goal,
+ *       target: {targetId: target.id},
+ *       timeoutMs: 120_000,
  *     });
+ *
+ *     for (let step = 0; step < 20; ++step) {
+ *       const availability = await session.availability.current();
+ *       if (!availability.canReadPage.ok) {
+ *         throw new Error(
+ *             availability.canReadPage.reason ?? 'BUA cannot read the page');
+ *       }
+ *       if (!availability.canAct.ok) {
+ *         await session.task.pause(availability.canAct.reason);
+ *         await productUi.waitForUserTakeover(availability.canAct.reason);
+ *         await session.task.resume({
+ *           snapshot: {purpose: 'recover', channels: {content: true}},
+ *         });
+ *         continue;
+ *       }
+ *
+ *       const snapshot = await session.snapshot({
+ *         target: {targetId: target.id},
+ *         mode: 'interact',
+ *         purpose: step === 0 ? 'plan' : 'verify',
+ *         channels: {
+ *           content: true,
+ *           screenshot: capabilities.snapshot.screenshot && step === 0,
+ *         },
+ *         budget: {timeoutMs: 5000, maxNodes: 4000, maxTextBytes: 128_000},
+ *       });
+ *
+ *       const decision = await planNextStep(goal, snapshot);
+ *       if (decision.kind === 'done') {
+ *         finalSummary = decision.summary;
+ *         await session.task.stop('completed');
+ *         return finalSummary;
+ *       }
+ *       if (decision.kind === 'handoff') {
+ *         await session.task.pause(decision.message);
+ *         await productUi.waitForUserTakeover(decision.message);
+ *         await session.task.resume({
+ *           snapshot: {purpose: 'recover', channels: {content: true}},
+ *         });
+ *         continue;
+ *       }
+ *
+ *       const result = await session.act(decision.actions, {
+ *         target: {targetId: target.id},
+ *         mode: 'safe',
+ *         timeoutMs: 15_000,
+ *         snapshotAfter: 'auto',
+ *         stopOnFirstError: true,
+ *       });
+ *
+ *       if (!result.ok) {
+ *         if (result.recovery?.some(hint => hint.type === 'refresh_snapshot')) {
+ *           continue;
+ *         }
+ *         throw new Error(result.message ?? `BUA action failed: ${result.code}`);
+ *       }
+ *
+ *       const latest = result.snapshot ?? session.latestSnapshot();
+ *       console.debug('BUA latest snapshot generation', latest?.generation);
+ *     }
+ *
+ *     await session.task.stop('failed');
+ *     throw new Error('BUA agent step budget exhausted');
+ *   } catch (error) {
+ *     await stopBestEffort(session, 'failed');
+ *     throw error;
+ *   } finally {
+ *     for (const subscription of subscriptions) {
+ *       subscription.unsubscribe();
+ *     }
+ *     await session.close(finalSummary ? 'task_finished' : 'task_aborted');
  *   }
  * }
  *
- * await session.close('task_finished');
+ * async function ensureAgentTarget(
+ *     session: BuaSession, url: string): Promise<BuaTargetSnapshot> {
+ *   const current = await session.targets.current();
+ *   if (current.kind === 'no_target') {
+ *     return session.targets.createTab({url});
+ *   }
+ *
+ *   await session.targets.activate({targetId: current.id});
+ *   if (current.url !== url) {
+ *     const result = await session.act(
+ *         {kind: 'navigate', url},
+ *         {target: {targetId: current.id}, snapshotAfter: 'fast'});
+ *     if (!result.ok) {
+ *       throw new Error(result.message ?? `Navigate failed: ${result.code}`);
+ *     }
+ *   }
+ *   return current;
+ * }
+ *
+ * async function planNextStep(
+ *     goal: string, snapshot: BuaPageSnapshot): Promise<AgentDecision> {
+ *   // Real products usually call an LLM here. This tiny planner demonstrates
+ *   // how the agent turns snapshot nodes into stable nodeId-based actions.
+ *   const root = snapshot.content;
+ *   if (!root) {
+ *     return {kind: 'handoff'};
+ *   }
+ *
+ *   const searchBox = findNode(root, node =>
+ *       (node.kind === 'input' || node.kind === 'textarea') &&
+ *       node.actions?.includes('type') &&
+ *       textMatches(node.name ?? node.field?.placeholder, /search|搜索/i));
+ *   if (searchBox) {
+ *     return {
+ *       kind: 'act',
+ *       actions: [
+ *         {
+ *           kind: 'type',
+ *           target: {nodeId: searchBox.id},
+ *           text: goal,
+ *           replace: true,
+ *           submit: true,
+ *         },
+ *         {kind: 'wait', waitMs: 500},
+ *       ],
+ *     };
+ *   }
+ *
+ *   const continueButton = findNode(root, node =>
+ *       (node.kind === 'button' || node.kind === 'link') &&
+ *       node.actions?.includes('click') &&
+ *       textMatches(node.name ?? node.text, /continue|next|下一步|继续/i));
+ *   if (continueButton) {
+ *     return {
+ *       kind: 'act',
+ *       actions: [{kind: 'click', target: {nodeId: continueButton.id}}],
+ *     };
+ *   }
+ *
+ *   if (snapshot.text?.innerText?.includes(goal)) {
+ *     return {kind: 'done', summary: 'The requested content is visible.'};
+ *   }
+ *
+ *   return {
+ *     kind: 'handoff',
+ *     message: 'No confident next browser action was found.',
+ *   };
+ * }
+ *
+ * function findNode(
+ *     node: BuaPageNode,
+ *     match: (candidate: BuaPageNode) => boolean): BuaPageNode|undefined {
+ *   if (match(node)) {
+ *     return node;
+ *   }
+ *   for (const child of node.children ?? []) {
+ *     const found = findNode(child, match);
+ *     if (found) {
+ *       return found;
+ *     }
+ *   }
+ *   return undefined;
+ * }
+ *
+ * function textMatches(text: string|undefined, pattern: RegExp): boolean {
+ *   return text !== undefined && pattern.test(text);
+ * }
+ *
+ * async function respondToUserRequest(
+ *     session: BuaSession, request: BuaUserRequest): Promise<void> {
+ *   switch (request.kind) {
+ *     case 'credential_selection':
+ *       await session.respondToUserRequest(request.id, {
+ *         kind: 'credential_selection',
+ *         selectedCredentialId:
+ *             await productUi.chooseCredential(request.credentials),
+ *         permissionDuration: 'one_time',
+ *       });
+ *       return;
+ *     case 'autofill_selection':
+ *       await session.respondToUserRequest(request.id, {
+ *         kind: 'autofill_selection',
+ *         selectedSuggestions: await productUi.chooseAutofillSuggestions(request),
+ *       });
+ *       return;
+ *     case 'user_confirmation':
+ *       await session.respondToUserRequest(request.id, {
+ *         kind: 'user_confirmation',
+ *         granted: await productUi.confirm(request.message),
+ *       });
+ *       return;
+ *     case 'navigation_confirmation':
+ *       await session.respondToUserRequest(request.id, {
+ *         kind: 'navigation_confirmation',
+ *         granted: await productUi.confirm(request.message ?? request.origin),
+ *       });
+ *       return;
+ *     case 'file_picker': {
+ *       const files = await productUi.chooseFiles(request);
+ *       await session.respondToUserRequest(request.id, {
+ *         kind: 'file_picker',
+ *         files,
+ *         cancelled: !files,
+ *       });
+ *       return;
+ *     }
+ *     case 'user_takeover':
+ *       await session.respondToUserRequest(request.id, {
+ *         kind: 'user_takeover',
+ *         completed: await productUi.waitForUserTakeover(request.message),
+ *       });
+ *       return;
+ *   }
+ * }
+ *
+ * async function stopBestEffort(
+ *     session: BuaSession, reason: BuaStopReason): Promise<void> {
+ *   try {
+ *     await session.task.stop(reason);
+ *   } catch {
+ *   }
+ * }
  * ```
  */
 
@@ -70,7 +309,7 @@ export interface BuaClient {
   createSession(options?: BuaSessionOptions): Promise<BuaSession>;
 }
 
-/** 一次 Browser Use 会话，聚合感知、动作、任务状态、用户请求和诊断能力。 */
+/** 一次 Browser Use 会话，聚合感知、动作、任务状态和用户请求事件能力。 */
 export interface BuaSession {
   readonly id: BuaId;
   readonly capabilities: BuaCapabilities;
@@ -78,9 +317,14 @@ export interface BuaSession {
   readonly availability: BuaAvailabilityApi;
   readonly task: BuaTaskApi;
   readonly targets: BuaTargetApi;
-  readonly requests: BuaUserRequestApi;
-  readonly events: BuaEventApi;
-  readonly diagnostics: BuaDiagnosticsApi;
+
+  /** 订阅 session 运行时事件，包括任务、目标、动作和用户请求变化。 */
+  on<T extends BuaEventType>(
+      type: T, handler: (event: BuaEvent<T>) => void): BuaSubscription;
+
+  /** 响应 session.on('user_request') 发布的用户请求。 */
+  respondToUserRequest(
+      requestId: BuaId, response: BuaUserResponse): Promise<void>;
 
   /** 主动读取一次当前页面状态，返回适合 LLM 消费的页面快照。 */
   snapshot(options?: BuaSnapshotOptions): Promise<BuaPageSnapshot>;
@@ -116,7 +360,7 @@ export interface BuaCapabilities {
   readonly events: readonly BuaEventType[];
 }
 
-/** backend 的基本信息，仅用于诊断和能力展示，不参与业务决策。 */
+/** backend 的基本信息，仅用于能力展示，不参与业务决策。 */
 export interface BuaBackendInfo {
   readonly name: string;
   readonly version?: string;
@@ -179,7 +423,6 @@ export interface BuaAvailability {
   readonly focusedTarget: BuaAvailabilityCheck;
   readonly permissions: readonly BuaPermissionState[];
   readonly policies: readonly BuaPolicyState[];
-  readonly diagnostics?: readonly BuaDiagnostic[];
 }
 
 /** 某个可用性检查项的结果，并可附带恢复建议。 */
@@ -221,22 +464,35 @@ export type BuaPolicyName =
   | 'cross_origin_navigation'
   | 'sensitive_content';
 
-/** 任务生命周期 API，用来支持长任务、取消、暂停、恢复和用户介入。 */
+/** 任务生命周期 API，用来支持任务创建、状态观察、暂停/恢复和结束。 */
 export interface BuaTaskApi {
   /** 开始一个 Browser Use 任务；backend 没有原生 task 时可由 SDK 模拟。 */
   start(options?: BuaTaskOptions): Promise<BuaTaskState>;
   /** 获取当前任务状态。 */
   state(): Promise<BuaTaskState>;
-  /** 暂停任务并取消或冻结正在执行的动作。 */
+  /**
+   * 暂停任务并把控制权还给用户。
+   *
+   * 暂停会取消当前仍在执行的动作，但不会结束任务；之后可以 resume 或 stop。
+   */
   pause(reason?: string): Promise<BuaTaskState>;
   /** 恢复暂停的任务，可选择恢复时重新观察页面。 */
   resume(options?: BuaResumeOptions): Promise<BuaTaskState>;
-  /** 标记任务等待外部输入，但不一定完全暂停任务资源。 */
-  interrupt(reason?: BuaInterruptReason): Promise<BuaTaskState>;
-  /** 停止任务并清理任务相关状态。 */
+  /**
+   * 请求取消当前仍在执行的 act 动作序列。
+   *
+   * 只影响 in-flight actions，不回滚已完成动作，也不把 task 标记为 stopped。
+   * 常用于用户抢占、超时或外部策略要求立即停止当前动作；之后仍需根据任务
+   * 是否继续推进来调用 snapshot/act 或 stop。
+   */
+  cancel(reason?: string): Promise<BuaCancelResult>;
+  /**
+   * 结束整个 Browser Use 任务并进入 stopped 终态。
+   *
+   * 用于任务完成、失败、用户取消或 session 关闭。调用后业务侧不应继续推进
+   * 这个 task，应创建新 task 或新 session 执行后续工作。
+   */
   stop(reason?: BuaStopReason): Promise<BuaStopResult>;
-  /** 取消正在执行的动作序列，不表示回滚已经完成的动作。 */
-  cancelActions(reason?: string): Promise<BuaCancelResult>;
 }
 
 /** 启动任务时的业务上下文和运行约束。 */
@@ -254,13 +510,6 @@ export interface BuaResumeOptions {
   snapshot?: boolean|BuaSnapshotOptions;
 }
 
-export type BuaInterruptReason =
-  | 'needs_user_input'
-  | 'needs_confirmation'
-  | 'needs_credential'
-  | 'needs_external_action'
-  | 'other';
-
 export type BuaStopReason =
   | 'completed'
   | 'cancelled'
@@ -272,22 +521,20 @@ export type BuaStopReason =
 /** 任务当前状态，业务侧可用它决定是否继续调用 snapshot/act。 */
 export interface BuaTaskState {
   readonly id: BuaId;
-  readonly status:
-      'idle'|'running'|'acting'|'paused'|'interrupted'|'stopping'|'stopped';
+  readonly status: 'idle'|'acting'|'paused'|'stopped';
   readonly startedAtMs?: BuaTimestampMs;
   readonly updatedAtMs: BuaTimestampMs;
   readonly reason?: string;
   readonly currentActionId?: BuaId;
 }
 
-/** 停止任务的结果，包含最终任务状态和可能的诊断信息。 */
+/** 停止任务的结果，包含最终任务状态。 */
 export interface BuaStopResult {
   readonly ok: boolean;
   readonly state: BuaTaskState;
-  readonly diagnostics?: readonly BuaDiagnostic[];
 }
 
-/** 取消当前动作的结果；没有动作可取消时不应视为异常。 */
+/** 取消当前动作序列的结果；没有 in-flight act 时不应视为异常。 */
 export interface BuaCancelResult {
   readonly ok: boolean;
   readonly status: 'cancelled'|'nothing_to_cancel'|'failed';
@@ -425,7 +672,6 @@ export interface BuaPageSnapshot {
   readonly screenshot?: BuaScreenshot;
 
   readonly quality: BuaSnapshotQuality;
-  readonly diagnostics?: readonly BuaDiagnostic[];
 }
 
 /** 页面文本通道，对齐浏览器页面上下文中的可读文本事实。 */
@@ -697,7 +943,7 @@ export type BuaAction =
   | BuaCaptureAction
   | BuaYieldToUserAction;
 
-/** 动作类型名称，常用于 capabilities、节点支持动作和诊断信息。 */
+/** 动作类型名称，常用于 capabilities 和节点支持动作。 */
 export type BuaActionKind =
   | 'click'
   | 'type'
@@ -929,8 +1175,8 @@ export interface BuaActOptions {
 /** 动作执行结果，是业务侧判断下一步、恢复或结束任务的核心结构。 */
 export interface BuaActionResult {
   readonly ok: boolean;
-  readonly status:
-      'succeeded'|'failed'|'cancelled'|'paused'|'needs_user'|'unsupported';
+  readonly status: 'succeeded'|'failed'|'cancelled'|'paused'|'unsupported';
+  readonly actionRunId?: BuaId;
   readonly actionId: BuaId;
   readonly failedActionIndex?: number;
 
@@ -940,10 +1186,8 @@ export interface BuaActionResult {
 
   readonly effects?: readonly BuaActionEffect[];
   readonly snapshot?: BuaPageSnapshot;
-  readonly pendingRequest?: BuaUserRequest;
   readonly recovery?: readonly BuaRecoveryHint[];
   readonly timing?: BuaTiming;
-  readonly diagnostics?: readonly BuaDiagnostic[];
 }
 
 /** 动作对浏览器状态造成的可观察影响。 */
@@ -953,7 +1197,6 @@ export type BuaActionEffect =
   | {type: 'navigation_committed'; url?: string}
   | {type: 'target_created'; target: BuaTargetSnapshot}
   | {type: 'target_closed'; targetId: BuaId}
-  | {type: 'user_request'; request: BuaUserRequest}
   | {type: 'download_started'}
   | {type: 'file_picker_opened'};
 
@@ -976,8 +1219,8 @@ export type BuaErrorCategory =
 export interface BuaRecoveryHint {
   readonly type:
       'refresh_snapshot'|'try_alternative_target'|'wait'|'scroll'|
-      'request_permission'|'respond_to_user_request'|'yield_to_user'|
-      'stop_task'|'retry'|'use_screenshot';
+      'request_permission'|'yield_to_user'|'stop_task'|'retry'|
+      'use_screenshot';
   readonly reason: string;
   readonly action?: BuaAction;
 }
@@ -996,16 +1239,6 @@ export interface BuaTimingPhase {
   readonly elapsedMs: number;
 }
 
-/** 用户请求 API，用于处理凭据选择、确认、文件选择等需要外部响应的流程。 */
-export interface BuaUserRequestApi {
-  /** 获取下一个待处理用户请求；超时后返回 undefined。 */
-  next(options?: {timeoutMs?: number}): Promise<BuaUserRequest|undefined>;
-  /** 对指定用户请求给出响应。 */
-  respond(requestId: BuaId, response: BuaUserResponse): Promise<void>;
-  /** 监听新用户请求，适合业务侧 UI 实时弹窗。 */
-  onRequest(handler: (request: BuaUserRequest) => void): BuaSubscription;
-}
-
 /** 所有需要用户或业务 UI 介入的请求类型。 */
 export type BuaUserRequest =
   | BuaCredentialSelectionRequest
@@ -1019,6 +1252,9 @@ export type BuaUserRequest =
 export interface BuaBaseUserRequest {
   readonly id: BuaId;
   readonly taskId?: BuaId;
+  readonly actionRunId?: BuaId;
+  readonly actionId?: BuaId;
+  readonly actionIndex?: number;
   readonly createdAtMs: BuaTimestampMs;
   readonly message?: string;
 }
@@ -1148,13 +1384,6 @@ export interface BuaUserTakeoverResponse {
   readonly message?: string;
 }
 
-/** 事件 API，用于订阅任务、目标、观察、动作和诊断等运行时变化。 */
-export interface BuaEventApi {
-  /** 订阅指定类型事件，返回可取消订阅对象。 */
-  on<T extends BuaEventType>(
-      type: T, handler: (event: BuaEvent<T>) => void): BuaSubscription;
-}
-
 /** BUA runtime 对外发布的事件类型。 */
 export type BuaEventType =
   | 'task_state_changed'
@@ -1164,8 +1393,7 @@ export type BuaEventType =
   | 'permission_changed'
   | 'action_started'
   | 'action_finished'
-  | 'user_request'
-  | 'diagnostic';
+  | 'user_request';
 
 /** 事件类型到 payload 的映射。 */
 export interface BuaEventMap {
@@ -1177,7 +1405,6 @@ export interface BuaEventMap {
   readonly action_started: BuaActionEvent;
   readonly action_finished: BuaActionResult;
   readonly user_request: BuaUserRequest;
-  readonly diagnostic: BuaDiagnostic;
 }
 
 /** 事件对象，type 决定 value 的具体类型。 */
@@ -1196,7 +1423,9 @@ export interface BuaSnapshotInvalidatedEvent {
 
 /** 动作开始事件。 */
 export interface BuaActionEvent {
+  readonly actionRunId?: BuaId;
   readonly actionId: BuaId;
+  readonly actionIndex?: number;
   readonly action: BuaAction;
 }
 
@@ -1204,55 +1433,6 @@ export interface BuaActionEvent {
 export interface BuaSubscription {
   /** 取消订阅；多次调用应是安全的。 */
   unsubscribe(): void;
-}
-
-/** 诊断 API，用于读取 trace、上报诊断信息和监听诊断事件。 */
-export interface BuaDiagnosticsApi {
-  /** 获取当前 session 的 trace，便于排查失败和评估耗时。 */
-  trace(): Promise<BuaTrace>;
-  /** 上报一条诊断信息，通常由 runtime 或 adapter 调用。 */
-  report(diagnostic: BuaDiagnostic): void;
-  /** 监听诊断信息。 */
-  onDiagnostic(handler: (diagnostic: BuaDiagnostic) => void): BuaSubscription;
-}
-
-/** 一次 session/task 的结构化执行轨迹。 */
-export interface BuaTrace {
-  readonly sessionId: BuaId;
-  readonly taskId?: BuaId;
-  readonly startedAtMs?: BuaTimestampMs;
-  readonly endedAtMs?: BuaTimestampMs;
-  readonly entries: readonly BuaTraceEntry[];
-}
-
-/** trace 中的一条记录。 */
-export interface BuaTraceEntry {
-  readonly id: BuaId;
-  readonly type:
-      'snapshot'|'act'|'availability'|'target'|'user_request'|'event'|
-      'backend'|'diagnostic';
-  readonly createdAtMs: BuaTimestampMs;
-  readonly message?: string;
-  readonly timing?: BuaTiming;
-  readonly diagnostic?: BuaDiagnostic;
-  readonly metadata?: BuaMetadata;
-}
-
-/** 统一诊断信息，backend 原始错误只能放在 backend 字段中。 */
-export interface BuaDiagnostic {
-  readonly level: 'debug'|'info'|'warning'|'error';
-  readonly code: string;
-  readonly message: string;
-  readonly category?: BuaErrorCategory|'snapshot'|'availability'|'adapter';
-  readonly backend?: BuaBackendDiagnostic;
-  readonly metadata?: BuaMetadata;
-}
-
-/** backend 原始诊断信息，用于排查问题，不作为业务稳定 contract。 */
-export interface BuaBackendDiagnostic {
-  readonly name?: string;
-  readonly code?: string|number;
-  readonly message?: string;
 }
 
 /***************************************************** */
@@ -1270,7 +1450,7 @@ export interface BuaBackendAdapter {
   startTask?(options?: BuaTaskOptions): Promise<BuaBackendTask>;
   /** 停止 backend 原生 task。 */
   stopTask?(reason?: string): Promise<void>;
-  /** 取消 backend 当前动作。 */
+  /** 请求取消 backend 当前仍在执行的动作序列。 */
   cancelActions?(reason?: string): Promise<void>;
 
   /** 返回 backend 的目标管理实现。 */
@@ -1350,8 +1530,7 @@ export type BuaBackendEventType =
   | 'task_state'
   | 'target_state'
   | 'availability'
-  | 'user_request'
-  | 'diagnostic';
+  | 'user_request';
 
 /** backend 事件处理函数。 */
 export type BuaBackendEventHandler =
