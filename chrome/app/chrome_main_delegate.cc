@@ -279,7 +279,7 @@ bool IsSandboxedProcess() {
 constexpr char kLocalGlicGuestUrl[] = "https://zzcdznht.fn.bytedance.net";
 constexpr char kLocalGlicEnabledFeatures[] =
     "Glic,GlicActor,GlicActorUi,GlicActorToctouValidation,"
-    "GlicActorSkipScreenshot";
+    "GlicActorSkipScreenshot,GlicNoWebUiLoader";
 constexpr char kLocalGlicDisabledFeatures[] = "GlicUserStatusCheck";
 
 void AppendCommaSeparatedSwitchValue(base::CommandLine* command_line,

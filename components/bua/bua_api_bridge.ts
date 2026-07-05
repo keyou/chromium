@@ -12,7 +12,7 @@ import type {
 } from './bua_api2.js';
 
 export const BUA_BRIDGE_TOOL_NAMES = [
-  'bua_tab_new',
+  'bua_tab_create',
   'bua_tab_list',
   'bua_tab_current',
   'bua_tab_activate',
@@ -48,11 +48,15 @@ export interface BuaBridgeToolDefinition {
 
 export interface BuaBridgeOptions {
   readonly session: BuaSession;
+  // Host-owned user takeover flow; Bridge only pauses and resumes the task.
   readonly takeOverHandler?: BuaTakeOverHandler;
 }
 
 export interface BuaBridge {
+  // Stable order follows BUA_BRIDGE_TOOL_NAMES.
   tools(): readonly BuaBridgeToolDefinition[];
+  // Validates args, dispatches through the injected session, and formats
+  // output.
   invokeTool(
       name: BuaBridgeToolName,
       args: BuaBridgeToolArgs,
@@ -83,7 +87,7 @@ export interface BuaBridgeFailureResult<TData = BuaJsonValue> {
 }
 
 export interface BuaBridgeContent {
-  readonly format: 'markdown'|'yaml';
+  readonly format: 'yaml';
   readonly text: string;
 }
 
@@ -139,7 +143,7 @@ export type BuaBridgeMethodPath =
 
 export const BUA_BRIDGE_TOOL_METHOD_MAP: Record<
     BuaBridgeToolName, BuaBridgeMethodPath> = {
-  bua_tab_new: 'session.tabs.create',
+  bua_tab_create: 'session.tabs.create',
   bua_tab_list: 'session.tabs.list',
   bua_tab_current: 'session.tabs.current',
   bua_tab_activate: 'session.tabs.activate',
@@ -184,11 +188,14 @@ const EMPTY_INPUT_SCHEMA: BuaBridgeJsonSchema = {
 
 const TAB_ID_SCHEMA: BuaBridgeJsonSchema = {
   type: 'string',
-  description: 'Tab id returned by bua_tab_list, bua_tab_new, or bua_tab_current.',
+  description:
+      'Tab id returned by bua_tab_list, bua_tab_create, or bua_tab_current.',
 };
 
 const POINT_SCHEMA: BuaBridgeJsonSchema = {
   type: 'object',
+  description:
+      'Coordinate fallback target. Use only when no nodeId is available or the backend only supports coordinates.',
   properties: {
     x: {type: 'number'},
     y: {type: 'number'},
@@ -198,27 +205,25 @@ const POINT_SCHEMA: BuaBridgeJsonSchema = {
 };
 
 const ELEMENT_TARGET_SCHEMA: BuaBridgeJsonSchema = {
+  description:
+      'Prefer nodeId from bua_page_snapshot when available; use point only as a coordinate fallback.',
   oneOf: [
     {
       type: 'object',
-      properties: {nodeId: {type: 'string'}},
+      description: 'Preferred target form.',
+      properties: {
+        nodeId: {
+          type: 'string',
+          description:
+              'Preferred action target. Use an id returned by bua_page_snapshot.',
+        },
+      },
       required: ['nodeId'],
       additionalProperties: false,
     },
     {
       type: 'object',
-      properties: {selector: {type: 'string'}},
-      required: ['selector'],
-      additionalProperties: false,
-    },
-    {
-      type: 'object',
-      properties: {text: {type: 'string'}},
-      required: ['text'],
-      additionalProperties: false,
-    },
-    {
-      type: 'object',
+      description: 'Coordinate fallback target form.',
       properties: {point: POINT_SCHEMA},
       required: ['point'],
       additionalProperties: false,
@@ -276,6 +281,15 @@ const WAIT_OPTIONS_SCHEMA: BuaBridgeJsonSchema = {
           required: ['type', 'target'],
           additionalProperties: false,
         },
+        {
+          type: 'object',
+          properties: {
+            type: {const: 'element_absent'},
+            target: ELEMENT_TARGET_SCHEMA,
+          },
+          required: ['type', 'target'],
+          additionalProperties: false,
+        },
       ],
     },
     timeoutMs: {type: 'number', minimum: 0},
@@ -286,8 +300,8 @@ const WAIT_OPTIONS_SCHEMA: BuaBridgeJsonSchema = {
 
 export const BUA_BRIDGE_TOOL_DEFINITIONS: Record<
     BuaBridgeToolName, BuaBridgeToolDefinition> = {
-  bua_tab_new: {
-    name: 'bua_tab_new',
+  bua_tab_create: {
+    name: 'bua_tab_create',
     description: 'Open a new browser tab and optionally make it current.',
     inputSchema: {
       type: 'object',
@@ -400,23 +414,18 @@ export const BUA_BRIDGE_TOOL_DEFINITIONS: Record<
   bua_page_extract_content: {
     name: 'bua_page_extract_content',
     description: 'Extract readable content from the current page.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        format: {enum: ['markdown', 'yaml']},
-      },
-      additionalProperties: false,
-    },
+    inputSchema: EMPTY_INPUT_SCHEMA,
     outputMode: 'content',
   },
   bua_page_click: {
     name: 'bua_page_click',
-    description: 'Click an element or point on the current page.',
+    description:
+        'Click a nodeId target from snapshot, or a point fallback.',
     inputSchema: {
       type: 'object',
       properties: {
         target: ELEMENT_TARGET_SCHEMA,
-        button: {enum: ['left', 'middle', 'right']},
+        button: {enum: ['left', 'right']},
         clickCount: {type: 'number', minimum: 1},
       },
       required: ['target'],
@@ -426,7 +435,8 @@ export const BUA_BRIDGE_TOOL_DEFINITIONS: Record<
   },
   bua_page_type: {
     name: 'bua_page_type',
-    description: 'Type text into an element on the current page.',
+    description:
+        'Type text into a nodeId target from snapshot, or a point fallback.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -459,7 +469,8 @@ export const BUA_BRIDGE_TOOL_DEFINITIONS: Record<
   },
   bua_page_scrollto: {
     name: 'bua_page_scrollto',
-    description: 'Scroll the current page to an element or point.',
+    description:
+        'Scroll the current page to a nodeId target, or a point fallback.',
     inputSchema: {
       type: 'object',
       properties: {target: ELEMENT_TARGET_SCHEMA},
@@ -470,7 +481,8 @@ export const BUA_BRIDGE_TOOL_DEFINITIONS: Record<
   },
   bua_page_movemouse: {
     name: 'bua_page_movemouse',
-    description: 'Move the pointer to an element or point on the current page.',
+    description:
+        'Move the pointer to a nodeId target, or a point fallback.',
     inputSchema: {
       type: 'object',
       properties: {target: ELEMENT_TARGET_SCHEMA},
@@ -481,7 +493,8 @@ export const BUA_BRIDGE_TOOL_DEFINITIONS: Record<
   },
   bua_page_drag: {
     name: 'bua_page_drag',
-    description: 'Drag from one element or point to another on the current page.',
+    description:
+        'Drag between nodeId targets from snapshot, or point fallbacks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -495,7 +508,8 @@ export const BUA_BRIDGE_TOOL_DEFINITIONS: Record<
   },
   bua_page_select: {
     name: 'bua_page_select',
-    description: 'Select option values in a control on the current page.',
+    description:
+        'Select option values in a nodeId target from snapshot, or a point fallback.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -512,7 +526,8 @@ export const BUA_BRIDGE_TOOL_DEFINITIONS: Record<
   },
   bua_page_wait: {
     name: 'bua_page_wait',
-    description: 'Wait for time, page stability, URL, text, or element presence.',
+    description:
+        'Wait for time, page stability, URL, text, element presence, or element absence.',
     inputSchema: WAIT_OPTIONS_SCHEMA,
     outputMode: 'mixed',
   },

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -15,15 +16,17 @@
 #include <vector>
 
 #include "base/base64.h"
-#include "base/base64url.h"
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/location.h"
+#include "base/strings/pattern.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/actor/actor_keyed_service.h"
@@ -42,16 +45,23 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/common/actor/action_result.h"
+#include "chrome/common/actor/actor_constants.h"
 #include "components/actor/core/task_source_info.h"
 #include "components/actor/public/mojom/actor_types.mojom.h"
+#include "components/optimization_guide/content/browser/page_content_proto_provider.h"
 #include "components/optimization_guide/proto/features/actions_data.pb.h"
 #include "components/optimization_guide/proto/features/common_quality_data.pb.h"
 #include "components/page_content_annotations/content/page_context_fetcher.h"
 #include "components/page_content_annotations/content/page_context_fetcher_options.h"
 #include "components/tabs/public/tab_interface.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_widget_host.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/web_contents.h"
 #include "mojo/public/cpp/base/proto_wrapper.h"
+#include "third_party/blink/public/common/input/web_mouse_event.h"
+#include "ui/gfx/geometry/point_f.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -60,10 +70,14 @@ namespace {
 
 namespace apc = optimization_guide::proto;
 
-constexpr char kNodeIdPrefix[] = "bua-page-node:";
+constexpr char kViewportNodeId[] = "viewport";
 constexpr int kDefaultInnerTextBytesLimit = 256 * 1024;
 constexpr int kDefaultPdfBytesLimit = 2 * 1024 * 1024;
 constexpr int kDefaultMaxNodes = 2000;
+constexpr int kDefaultWaitTimeoutMs = 5000;
+constexpr int kMaxWaitTimeoutMs = 60000;
+constexpr int kWaitPollIntervalMs = 250;
+constexpr int kDefaultStableForMs = 500;
 
 int64_t NowMs() {
   return base::Time::Now().InMillisecondsSinceUnixEpoch();
@@ -106,19 +120,6 @@ base::ListValue StringList(std::initializer_list<std::string_view> values) {
     list.Append(std::string(value));
   }
   return list;
-}
-
-base::DictValue OkCheck() {
-  base::DictValue check;
-  check.Set("ok", true);
-  return check;
-}
-
-base::DictValue FailedCheck(std::string reason) {
-  base::DictValue check;
-  check.Set("ok", false);
-  check.Set("reason", std::move(reason));
-  return check;
 }
 
 std::optional<base::DictValue> ParseRequestDict(
@@ -481,10 +482,10 @@ base::ListValue BuildTargetListForProfile(
     content::BrowserContext* browser_context,
     std::optional<int32_t> window_id,
     bool include_background) {
-  base::ListValue targets;
+  base::ListValue tabs;
   GlobalBrowserCollection* collection = GlobalBrowserCollection::GetInstance();
   if (!collection) {
-    return targets;
+    return tabs;
   }
 
   collection->ForEach(
@@ -503,12 +504,12 @@ base::ListValue BuildTargetListForProfile(
           if (!tab || (!include_background && !tab->IsActivated())) {
             continue;
           }
-          targets.Append(BuildTargetSnapshotFromTab(tab));
+          tabs.Append(BuildTargetSnapshotFromTab(tab));
         }
         return true;
       },
       BrowserCollection::Order::kActivation);
-  return targets;
+  return tabs;
 }
 
 bool IsCreateTabUrlAllowed(const GURL& url) {
@@ -529,8 +530,8 @@ tabs::TabInterface* CreateTabForProfile(
         Error(window_id ? "target_not_found" : "no_target",
               window_id ? "windowId does not refer to a browser window in "
                           "this profile."
-                        : "targets.createTab requires an existing browser "
-                          "window for this profile.",
+                        : "tabs.create requires an existing browser window "
+                          "for this profile.",
               "target_not_found");
     return nullptr;
   }
@@ -602,173 +603,167 @@ base::DictValue BuildCreatedTabNavigateResult(const base::DictValue& action,
   return result;
 }
 
+base::DictValue BuildReloadActionResult(const base::DictValue& action,
+                                        tabs::TabInterface* tab,
+                                        base::TimeTicks start_time,
+                                        bool ignore_cache) {
+  base::DictValue result;
+  result.Set("ok", true);
+  result.Set("status", "succeeded");
+  result.Set("actionId",
+             FindStringMember(action, "id").value_or("bua-action-0"));
+  result.Set("code", "bua:reload_started");
+  result.Set("category", "navigation");
+  result.Set("message", ignore_cache ? "Reload bypassing cache started."
+                                     : "Reload started.");
+  result.Set("target", BuildTargetSnapshotFromTab(tab));
+
+  base::DictValue timing;
+  timing.Set("endedAtMs", static_cast<double>(NowMs()));
+  timing.Set(
+      "elapsedMs",
+      static_cast<int>((base::TimeTicks::Now() - start_time).InMilliseconds()));
+  result.Set("timing", std::move(timing));
+  return result;
+}
+
+base::DictValue BuildMiddleClickActionResult(const base::DictValue& action,
+                                             tabs::TabInterface* tab,
+                                             base::TimeTicks start_time,
+                                             const gfx::PointF& point,
+                                             int click_count) {
+  base::DictValue result;
+  result.Set("ok", true);
+  result.Set("status", "succeeded");
+  result.Set("actionId",
+             FindStringMember(action, "id").value_or("bua-action-0"));
+  result.Set("code", "bua:middle_click_dispatched");
+  result.Set("category", "actuation");
+  result.Set("message", "Middle click was dispatched to the selected tab.");
+  result.Set("target", BuildTargetSnapshotFromTab(tab));
+
+  base::DictValue point_value;
+  point_value.Set("x", point.x());
+  point_value.Set("y", point.y());
+  result.Set("point", std::move(point_value));
+  result.Set("clickCount", click_count);
+
+  base::DictValue timing;
+  timing.Set("endedAtMs", static_cast<double>(NowMs()));
+  timing.Set(
+      "elapsedMs",
+      static_cast<int>((base::TimeTicks::Now() - start_time).InMilliseconds()));
+  result.Set("timing", std::move(timing));
+  return result;
+}
+
 base::DictValue BuildCapabilities() {
   base::DictValue backend;
   backend.Set("name", "bua-chromium");
   backend.Set("version", "0.2");
   backend.Set("protocol", "bua-mojo");
 
-  base::DictValue snapshot;
-  snapshot.Set("content", true);
-  snapshot.Set("screenshot", true);
-  snapshot.Set("metadata", true);
-  snapshot.Set("pdf", true);
+  base::DictValue task;
+  task.Set("start", true);
+  task.Set("pause", true);
+  task.Set("resume", true);
+  task.Set("cancel", true);
+  task.Set("stop", true);
 
-  base::DictValue act;
-  act.Set("actions",
-          StringList({"click", "type", "select", "scroll", "scroll_to", "hover",
-                      "navigate", "history", "wait", "tab"}));
-  act.Set("sequences", true);
-  act.Set("snapshotAfterAction", false);
-  act.Set("cancel", false);
-  act.Set("pause", false);
-  act.Set("resume", false);
+  base::DictValue tabs;
+  tabs.Set("create", true);
+  tabs.Set("list", true);
+  tabs.Set("current", true);
+  tabs.Set("activate", true);
+  tabs.Set("close", true);
 
-  base::DictValue targets;
-  targets.Set("current", true);
-  targets.Set("list", true);
-  targets.Set("createTab", true);
-  targets.Set("activateTab", true);
-  targets.Set("closeTab", true);
-  targets.Set("createWindow", false);
-  targets.Set("activateWindow", false);
-  targets.Set("closeWindow", false);
-
-  base::DictValue user_requests;
-  user_requests.Set("credentialSelection", false);
-  user_requests.Set("autofillSelection", false);
-  user_requests.Set("userConfirmation", false);
-  user_requests.Set("navigationConfirmation", false);
-  user_requests.Set("filePicker", false);
-  user_requests.Set("userTakeover", false);
+  base::DictValue page;
+  page.Set("navigate", true);
+  page.Set("snapshot", true);
+  page.Set("screenshot", true);
+  page.Set("act", true);
+  page.Set("actions",
+           StringList({"history", "click", "type", "scroll", "scroll_to",
+                       "move_mouse", "drag", "select", "wait"}));
 
   base::DictValue capabilities;
   capabilities.Set("backend", std::move(backend));
-  capabilities.Set("snapshot", std::move(snapshot));
-  capabilities.Set("act", std::move(act));
-  capabilities.Set("targets", std::move(targets));
-  capabilities.Set("userRequests", std::move(user_requests));
+  capabilities.Set("task", std::move(task));
+  capabilities.Set("tabs", std::move(tabs));
+  capabilities.Set("page", std::move(page));
   capabilities.Set("events", base::ListValue());
   return capabilities;
 }
 
-base::DictValue BuildAvailability(bool has_tab,
-                                  bool has_glic_service,
-                                  bool has_actor_service,
-                                  bool has_policy_checker,
-                                  bool can_act_on_web) {
-  base::ListValue permissions;
-
-  base::DictValue page_context;
-  page_context.Set("name", "page_context");
-  page_context.Set("state", has_tab ? "granted" : "denied");
-  page_context.Set("source", "browser");
-  permissions.Append(std::move(page_context));
-
-  base::DictValue screenshot;
-  screenshot.Set("name", "screenshot");
-  screenshot.Set("state", has_tab ? "granted" : "denied");
-  screenshot.Set("source", "browser");
-  permissions.Append(std::move(screenshot));
-
-  base::DictValue browser_actuation;
-  browser_actuation.Set("name", "browser_actuation");
-  browser_actuation.Set("state", can_act_on_web ? "granted" : "denied");
-  browser_actuation.Set("source", "backend");
-  if (!can_act_on_web) {
-    browser_actuation.Set(
-        "reason",
-        !has_actor_service
-            ? "BUA actuation backend is unavailable."
-        : !has_glic_service || !has_policy_checker
-            ? "BUA actuation policy checker is unavailable."
-            : "BUA actuation policy denied act-on-web.");
-  }
-  permissions.Append(std::move(browser_actuation));
-
-  base::ListValue policies;
-  base::DictValue scheme;
-  scheme.Set("name", "scheme");
-  scheme.Set("state", "allowed");
-  policies.Append(std::move(scheme));
-
-  base::ListValue diagnostics;
-  if (!has_actor_service || !has_glic_service || !has_policy_checker ||
-      !can_act_on_web) {
-    base::DictValue diagnostic;
-    diagnostic.Set("severity", can_act_on_web ? "info" : "warning");
-    diagnostic.Set("category", "backend");
-    diagnostic.Set(
-        "message",
-        "BUA snapshot and actuation are backed by Chromium services. "
-        "Actuation requires the browser actuation backend plus policy "
-        "permission.");
-    diagnostic.Set("hasSnapshotBackend", has_glic_service);
-    diagnostic.Set("hasActuationBackend", has_actor_service);
-    diagnostic.Set("hasActuationPolicy", has_policy_checker);
-    diagnostic.Set("canActOnWeb", can_act_on_web);
-    diagnostics.Append(std::move(diagnostic));
-  }
-
-  base::DictValue availability;
-  availability.Set("status", has_tab && can_act_on_web ? "available"
-                             : has_tab                 ? "degraded"
-                                                       : "unavailable");
-  availability.Set("canReadPage",
-                   has_tab ? OkCheck() : FailedCheck("No tab is available."));
-  availability.Set(
-      "canAct",
-      can_act_on_web
-          ? OkCheck()
-          : FailedCheck("BUA act-on-web backend is unavailable or "
-                        "blocked by policy."));
-  availability.Set("focusedTarget",
-                   has_tab ? OkCheck() : FailedCheck("No tab is available."));
-  availability.Set("permissions", std::move(permissions));
-  availability.Set("policies", std::move(policies));
-  availability.Set("diagnostics", std::move(diagnostics));
-  return availability;
-}
-
-std::string EncodeBuaPageNodeId(std::string_view document_identifier,
-                                int dom_node_id) {
-  std::string encoded_document;
-  base::Base64UrlEncode(document_identifier,
-                        base::Base64UrlEncodePolicy::OMIT_PADDING,
-                        &encoded_document);
-  return base::StringPrintf("%s%s:%d", kNodeIdPrefix, encoded_document.c_str(),
-                            dom_node_id);
-}
+using DocumentIdentifierToShortIdMap = std::map<std::string, int>;
+using ShortDocumentIdToIdentifierMap = std::map<int, std::string>;
 
 struct BuaPageNodeRef {
   std::string document_identifier;
   int dom_node_id = 0;
 };
 
-std::optional<BuaPageNodeRef> DecodeBuaPageNodeId(std::string_view node_id) {
-  if (!node_id.starts_with(kNodeIdPrefix)) {
-    return std::nullopt;
+int RegisterShortDocumentId(
+    std::string_view document_identifier,
+    DocumentIdentifierToShortIdMap* document_identifier_to_short_id,
+    ShortDocumentIdToIdentifierMap* short_document_id_to_identifier,
+    int* next_short_document_id) {
+  CHECK(document_identifier_to_short_id);
+  CHECK(short_document_id_to_identifier);
+  CHECK(next_short_document_id);
+
+  std::string document_identifier_string(document_identifier);
+  auto existing =
+      document_identifier_to_short_id->find(document_identifier_string);
+  if (existing != document_identifier_to_short_id->end()) {
+    return existing->second;
   }
-  std::string_view body =
-      node_id.substr(std::string_view(kNodeIdPrefix).size());
-  size_t separator = body.rfind(':');
+
+  const int short_document_id = (*next_short_document_id)++;
+  auto [inserted, _] = document_identifier_to_short_id->emplace(
+      std::move(document_identifier_string), short_document_id);
+  short_document_id_to_identifier->emplace(short_document_id, inserted->first);
+  return short_document_id;
+}
+
+std::string EncodeBuaPageNodeId(
+    std::string_view document_identifier,
+    int dom_node_id,
+    DocumentIdentifierToShortIdMap* document_identifier_to_short_id,
+    ShortDocumentIdToIdentifierMap* short_document_id_to_identifier,
+    int* next_short_document_id) {
+  const int short_document_id =
+      RegisterShortDocumentId(document_identifier, document_identifier_to_short_id,
+                              short_document_id_to_identifier,
+                              next_short_document_id);
+  return base::StringPrintf("%d.%d", short_document_id, dom_node_id);
+}
+
+std::optional<BuaPageNodeRef> DecodeBuaPageNodeId(
+    std::string_view node_id,
+    const ShortDocumentIdToIdentifierMap& short_document_id_to_identifier) {
+  size_t separator = node_id.rfind('.');
   if (separator == std::string_view::npos || separator == 0 ||
-      separator == body.size() - 1) {
+      separator == node_id.size() - 1) {
     return std::nullopt;
   }
 
-  std::string document_identifier;
-  if (!base::Base64UrlDecode(body.substr(0, separator),
-                             base::Base64UrlDecodePolicy::DISALLOW_PADDING,
-                             &document_identifier)) {
+  int short_document_id = 0;
+  if (!base::StringToInt(node_id.substr(0, separator), &short_document_id) ||
+      short_document_id <= 0) {
+    return std::nullopt;
+  }
+  auto document =
+      short_document_id_to_identifier.find(short_document_id);
+  if (document == short_document_id_to_identifier.end()) {
     return std::nullopt;
   }
 
   int dom_node_id = 0;
-  if (!base::StringToInt(body.substr(separator + 1), &dom_node_id)) {
+  if (!base::StringToInt(node_id.substr(separator + 1), &dom_node_id)) {
     return std::nullopt;
   }
-  return BuaPageNodeRef{std::move(document_identifier), dom_node_id};
+  return BuaPageNodeRef{document->second, dom_node_id};
 }
 
 std::string OriginFromSecurityOrigin(
@@ -1031,7 +1026,10 @@ base::DictValue BuildBuaPageSnapshotNode(
     int max_nodes,
     int* visited_nodes,
     int* generated_node_id,
-    bool* truncated) {
+    bool* truncated,
+    DocumentIdentifierToShortIdMap* document_identifier_to_short_id,
+    ShortDocumentIdToIdentifierMap* short_document_id_to_identifier,
+    int* next_short_document_id) {
   ++(*visited_nodes);
   if (*visited_nodes > max_nodes) {
     *truncated = true;
@@ -1051,10 +1049,12 @@ base::DictValue BuildBuaPageSnapshotNode(
       !document_identifier.empty()) {
     out.Set("id", EncodeBuaPageNodeId(
                       document_identifier,
-                      attributes.common_ancestor_dom_node_id()));
+                      attributes.common_ancestor_dom_node_id(),
+                      document_identifier_to_short_id,
+                      short_document_id_to_identifier,
+                      next_short_document_id));
   } else {
-    out.Set("id", base::StringPrintf("bua-page-node-anon:%d",
-                                      *generated_node_id));
+    out.Set("id", base::StringPrintf("anon.%d", *generated_node_id));
     ++(*generated_node_id);
   }
   out.Set("snapshotId", snapshot_id);
@@ -1162,7 +1162,9 @@ base::DictValue BuildBuaPageSnapshotNode(
       }
       children.Append(BuildBuaPageSnapshotNode(
           child, snapshot_id, document_identifier, main_frame_data, max_nodes,
-          visited_nodes, generated_node_id, truncated));
+          visited_nodes, generated_node_id, truncated,
+          document_identifier_to_short_id, short_document_id_to_identifier,
+          next_short_document_id));
     }
     if (!children.empty()) {
       out.Set("children", std::move(children));
@@ -1204,7 +1206,10 @@ base::DictValue BuildSnapshotFromTabContext(
     int generation,
     const glic::mojom::TabContext& context,
     content::WebContents* web_contents,
-    int max_nodes) {
+    int max_nodes,
+    DocumentIdentifierToShortIdMap* document_identifier_to_short_id,
+    ShortDocumentIdToIdentifierMap* short_document_id_to_identifier,
+    int* next_short_document_id) {
   base::DictValue page;
   if (context.tab_data) {
     page.Set("url", context.tab_data->url.spec());
@@ -1248,7 +1253,8 @@ base::DictValue BuildSnapshotFromTabContext(
     content = BuildBuaPageSnapshotNode(
         annotated_page_content->root_node(), snapshot_id, document_identifier,
         main_frame_data, max_nodes, &visited_nodes, &generated_node_id,
-        &content_truncated);
+        &content_truncated, document_identifier_to_short_id,
+        short_document_id_to_identifier, next_short_document_id);
     content_available = true;
 
     if (annotated_page_content->has_viewport_geometry()) {
@@ -1479,6 +1485,195 @@ base::DictValue BuildBuaActionResult(
   return result;
 }
 
+int ClampWaitMs(int ms) {
+  return std::clamp(ms, 0, kMaxWaitTimeoutMs);
+}
+
+base::TimeDelta WaitTimeoutFromAction(const base::DictValue& action) {
+  return base::Milliseconds(
+      ClampWaitMs(action.FindInt("timeoutMs").value_or(kDefaultWaitTimeoutMs)));
+}
+
+bool HasSupportedElementTargetShape(const base::DictValue& target) {
+  const bool has_node_id = target.FindString("nodeId") != nullptr;
+  const bool has_point = target.FindDict("point") != nullptr;
+  return has_node_id != has_point;
+}
+
+std::optional<BuaWaitSpec> ParseWaitSpec(const base::DictValue& action,
+                                         int action_index,
+                                         std::string* error_json) {
+  const base::DictValue* condition = action.FindDict("condition");
+  if (!condition) {
+    *error_json =
+        Error("invalid_request", "wait action requires condition.", "input");
+    return std::nullopt;
+  }
+  const std::string* type = condition->FindString("type");
+  if (!type || type->empty()) {
+    *error_json =
+        Error("invalid_request", "wait condition requires type.", "input");
+    return std::nullopt;
+  }
+
+  BuaWaitSpec spec;
+  spec.action_id =
+      FindStringMember(action, "id")
+          .value_or(base::StringPrintf("bua-action-%d", action_index));
+  spec.type = *type;
+  spec.timeout = WaitTimeoutFromAction(action);
+  if (const base::DictValue* target_ref = action.FindDict("targetRef")) {
+    spec.target_ref = target_ref->Clone();
+  }
+
+  if (spec.type == "time") {
+    spec.delay =
+        base::Milliseconds(ClampWaitMs(condition->FindInt("ms").value_or(0)));
+    return spec;
+  }
+  if (spec.type == "page_stable") {
+    spec.stable_for = base::Milliseconds(ClampWaitMs(
+        condition->FindInt("stableForMs").value_or(kDefaultStableForMs)));
+    return spec;
+  }
+  if (spec.type == "url_matches") {
+    const std::string* pattern = condition->FindString("pattern");
+    if (!pattern || pattern->empty()) {
+      *error_json = Error("invalid_request",
+                          "url_matches wait requires pattern.", "input");
+      return std::nullopt;
+    }
+    spec.pattern = *pattern;
+    return spec;
+  }
+  if (spec.type == "text_present") {
+    const std::string* text = condition->FindString("text");
+    if (!text || text->empty()) {
+      *error_json =
+          Error("invalid_request", "text_present wait requires text.", "input");
+      return std::nullopt;
+    }
+    spec.text = *text;
+    return spec;
+  }
+  if (spec.type == "element_present" || spec.type == "element_absent") {
+    const base::DictValue* target = condition->FindDict("target");
+    if (!target) {
+      *error_json = Error("invalid_request",
+                          spec.type + " wait requires target.", "input");
+      return std::nullopt;
+    }
+    if (!HasSupportedElementTargetShape(*target)) {
+      *error_json =
+          Error("invalid_request",
+                spec.type + " wait target requires nodeId or point.", "input");
+      return std::nullopt;
+    }
+    spec.target = target->Clone();
+    spec.expect_absent = spec.type == "element_absent";
+    return spec;
+  }
+
+  *error_json = Error("unsupported", "Unsupported wait condition: " + spec.type,
+                      "unsupported");
+  return std::nullopt;
+}
+
+bool UrlMatchesPattern(std::string_view url, std::string_view pattern) {
+  return base::MatchPattern(url, pattern) ||
+         url.find(pattern) != std::string_view::npos;
+}
+
+bool ContainsSensitive(std::string_view text, std::string_view needle) {
+  return text.find(needle) != std::string_view::npos;
+}
+
+std::string SnapshotInnerText(const base::DictValue& snapshot) {
+  if (const base::DictValue* text = snapshot.FindDict("text")) {
+    if (const std::string* inner_text = text->FindString("innerText")) {
+      return *inner_text;
+    }
+  }
+  if (const std::string* text = snapshot.FindString("text")) {
+    return *text;
+  }
+  return std::string();
+}
+
+bool BoundsContainPoint(const base::DictValue& bounds,
+                        const base::DictValue& point) {
+  std::optional<double> x = point.FindDouble("x");
+  std::optional<double> y = point.FindDouble("y");
+  std::optional<double> left = bounds.FindDouble("x");
+  std::optional<double> top = bounds.FindDouble("y");
+  std::optional<double> width = bounds.FindDouble("width");
+  std::optional<double> height = bounds.FindDouble("height");
+  if (!x || !y || !left || !top || !width || !height) {
+    return false;
+  }
+  return *x >= *left && *x <= *left + *width && *y >= *top &&
+         *y <= *top + *height;
+}
+
+bool NodeMatchesTarget(const base::DictValue& node,
+                       const base::DictValue& target) {
+  if (const std::string* node_id = target.FindString("nodeId")) {
+    const std::string* id = node.FindString("id");
+    if (id && *id == *node_id) {
+      return true;
+    }
+  }
+  if (const base::DictValue* point = target.FindDict("point")) {
+    const base::DictValue* bounds = node.FindDict("bounds");
+    if (bounds && BoundsContainPoint(*bounds, *point)) {
+      return true;
+    }
+  }
+
+  const base::ListValue* children = node.FindList("children");
+  if (!children) {
+    return false;
+  }
+  for (const base::Value& child_value : *children) {
+    const base::DictValue* child = child_value.GetIfDict();
+    if (child && NodeMatchesTarget(*child, target)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool SnapshotHasTarget(const base::DictValue& snapshot,
+                       const base::DictValue& target) {
+  const base::DictValue* content = snapshot.FindDict("content");
+  return content && NodeMatchesTarget(*content, target);
+}
+
+base::DictValue BuildWaitActionResult(const BuaWaitSpec& spec,
+                                      base::TimeTicks start_time,
+                                      bool ok,
+                                      std::string message,
+                                      std::optional<base::DictValue> snapshot) {
+  base::DictValue result;
+  result.Set("ok", ok);
+  result.Set("status", ok ? "succeeded" : "timeout");
+  result.Set("actionId", spec.action_id);
+  result.Set("code", ok ? "bua:wait_satisfied" : "wait_timeout");
+  result.Set("category", ok ? "wait" : "timeout");
+  result.Set("message", std::move(message));
+
+  base::DictValue timing;
+  timing.Set("endedAtMs", static_cast<double>(NowMs()));
+  timing.Set(
+      "elapsedMs",
+      static_cast<int>((base::TimeTicks::Now() - start_time).InMilliseconds()));
+  result.Set("timing", std::move(timing));
+  if (snapshot) {
+    result.Set("snapshot", std::move(*snapshot));
+  }
+  return result;
+}
+
 bool FillPointTarget(const base::DictValue& point,
                      apc::ActionTarget* target,
                      std::string* error_json) {
@@ -1495,12 +1690,46 @@ bool FillPointTarget(const base::DictValue& point,
   return true;
 }
 
+std::optional<gfx::PointF> ReadPointTarget(const base::DictValue& point,
+                                           std::string* error_json) {
+  std::optional<double> x = point.FindDouble("x");
+  std::optional<double> y = point.FindDouble("y");
+  if (!x || !y || !std::isfinite(*x) || !std::isfinite(*y)) {
+    *error_json =
+        Error("invalid_request", "Action point target requires finite x and y.",
+              "input");
+    return std::nullopt;
+  }
+  return gfx::PointF(static_cast<float>(*x), static_cast<float>(*y));
+}
+
 bool FillActionTarget(const base::DictValue& target_dict,
                       apc::ActionTarget* target,
-                      content::RenderFrameHost& render_frame_host,
+                      tabs::TabInterface* tab,
+                      const ShortDocumentIdToIdentifierMap&
+                          short_document_id_to_identifier,
                       std::string* error_json) {
   if (const std::string* node_id = target_dict.FindString("nodeId")) {
-    std::optional<BuaPageNodeRef> node_ref = DecodeBuaPageNodeId(*node_id);
+    if (*node_id == kViewportNodeId) {
+      content::RenderFrameHost* render_frame_host =
+          tab && tab->GetContents() ? tab->GetContents()->GetPrimaryMainFrame()
+                                    : nullptr;
+      if (!render_frame_host) {
+        *error_json =
+            Error("target_not_found",
+                  "viewport target requires a live target page main frame.",
+                  "target_not_found");
+        return false;
+      }
+      target->set_content_node_id(actor::kRootElementDomNodeId);
+      target->mutable_document_identifier()->set_serialized_token(
+          optimization_guide::DocumentIdentifierUserData::
+              GetOrCreateForCurrentDocument(render_frame_host)
+                  ->serialized_token());
+      return true;
+    }
+    std::optional<BuaPageNodeRef> node_ref =
+        DecodeBuaPageNodeId(*node_id, short_document_id_to_identifier);
     if (!node_ref) {
       *error_json =
           Error("invalid_request",
@@ -1521,8 +1750,8 @@ bool FillActionTarget(const base::DictValue& target_dict,
   if (target_dict.FindDict("query")) {
     *error_json =
         Error("unsupported",
-              "target.query is not wired yet. Call snapshot() and use nodeId "
-              "or provide a point target.",
+              "target.query is not wired yet. Call snapshot() and prefer "
+              "nodeId; provide a point target only as a coordinate fallback.",
               "unsupported");
     return false;
   }
@@ -1543,10 +1772,60 @@ const base::DictValue* RequiredTarget(const base::DictValue& action,
   return target;
 }
 
+std::optional<gfx::PointF> ReadMiddleClickPoint(
+    const base::DictValue& action,
+    std::string* error_json) {
+  const base::DictValue* target = RequiredTarget(action, error_json);
+  if (!target) {
+    return std::nullopt;
+  }
+
+  const base::DictValue* point = target->FindDict("point");
+  if (!point) {
+    *error_json = Error(
+        "invalid_request",
+        "middle click requires a point target. Resolve element targets through "
+        "snapshot bounds before calling native page.act().",
+        "input");
+    return std::nullopt;
+  }
+  return ReadPointTarget(*point, error_json);
+}
+
+void ForwardMiddleMouseEvent(content::RenderWidgetHost* render_widget_host,
+                             blink::WebInputEvent::Type type,
+                             const gfx::PointF& point,
+                             int click_count) {
+  const int modifiers = blink::WebInputEvent::kFromDebugger |
+                        (type == blink::WebInputEvent::Type::kMouseDown
+                             ? blink::WebInputEvent::kMiddleButtonDown
+                             : blink::WebInputEvent::kNoModifiers);
+  blink::WebMouseEvent event(
+      type, point, point, blink::WebMouseEvent::Button::kMiddle, click_count,
+      modifiers, base::TimeTicks::Now());
+  event.UpdateEventModifiersToMatchButton();
+  render_widget_host->ForwardMouseEvent(event);
+}
+
+void ForwardMiddleClick(content::RenderWidgetHost* render_widget_host,
+                        const gfx::PointF& point,
+                        int click_count) {
+  for (int sequence = 1; sequence <= click_count; ++sequence) {
+    ForwardMiddleMouseEvent(render_widget_host,
+                            blink::WebInputEvent::Type::kMouseDown, point,
+                            sequence);
+    ForwardMiddleMouseEvent(render_widget_host,
+                            blink::WebInputEvent::Type::kMouseUp, point,
+                            sequence);
+  }
+}
+
 bool AppendBuaActionToProto(const base::DictValue& action,
                             int action_index,
                             tabs::TabInterface* default_tab,
                             content::BrowserContext* browser_context,
+                            const ShortDocumentIdToIdentifierMap&
+                                short_document_id_to_identifier,
                             content::RenderFrameHost& render_frame_host,
                             apc::Actions* actions_proto,
                             std::vector<std::string>* action_ids,
@@ -1578,15 +1857,30 @@ bool AppendBuaActionToProto(const base::DictValue& action,
       return false;
     }
     apc::ClickAction* click = proto_action->mutable_click();
-    if (!FillActionTarget(*target, click->mutable_target(), render_frame_host,
-                          error_json)) {
+    if (!FillActionTarget(*target, click->mutable_target(), default_tab,
+                          short_document_id_to_identifier, error_json)) {
       return false;
     }
     const std::string button =
         FindStringMember(action, "button").value_or("left");
-    click->set_click_type(button == "right" ? apc::ClickAction_ClickType_RIGHT
-                                            : apc::ClickAction_ClickType_LEFT);
-    click->set_click_count(action.FindInt("count").value_or(1) == 2
+    if (button == "left") {
+      click->set_click_type(apc::ClickAction_ClickType_LEFT);
+    } else if (button == "right") {
+      click->set_click_type(apc::ClickAction_ClickType_RIGHT);
+    } else if (button == "middle") {
+      *error_json = SuccessDict(UnsupportedActionResult(
+          action_id, action_index, kind,
+          "middle click must run as a standalone click action."));
+      return false;
+    } else {
+      *error_json = Error("invalid_request",
+                          "click.button must be left, middle, or right.",
+                          "input");
+      return false;
+    }
+    const int click_count = action.FindInt("clickCount")
+                                .value_or(action.FindInt("count").value_or(1));
+    click->set_click_count(click_count == 2
                                ? apc::ClickAction_ClickCount_DOUBLE
                                : apc::ClickAction_ClickCount_SINGLE);
     click->set_tab_id(tab_id);
@@ -1602,13 +1896,15 @@ bool AppendBuaActionToProto(const base::DictValue& action,
       return false;
     }
     apc::TypeAction* type = proto_action->mutable_type();
-    if (!FillActionTarget(*target, type->mutable_target(), render_frame_host,
-                          error_json)) {
+    if (!FillActionTarget(*target, type->mutable_target(), default_tab,
+                          short_document_id_to_identifier, error_json)) {
       return false;
     }
     type->set_text(*text);
-    const std::string mode =
-        FindStringMember(action, "mode").value_or("replace");
+    std::string mode = FindStringMember(action, "mode").value_or("replace");
+    if (std::optional<bool> replace = action.FindBool("replace")) {
+      mode = *replace ? "replace" : "append";
+    }
     if (mode == "append") {
       type->set_mode(apc::TypeAction_TypeMode_APPEND);
     } else if (mode == "prepend") {
@@ -1624,28 +1920,39 @@ bool AppendBuaActionToProto(const base::DictValue& action,
       return false;
     }
     const std::string* value = action.FindString("value");
-    if (!value) {
+    const base::ListValue* values = action.FindList("values");
+    const std::string* first_value =
+        values && !values->empty() ? (*values)[0].GetIfString() : nullptr;
+    if (!value && !first_value) {
       *error_json =
-          Error("invalid_request", "select action requires value.", "input");
+          Error("invalid_request", "select action requires values.", "input");
       return false;
     }
     apc::SelectAction* select = proto_action->mutable_select();
-    if (!FillActionTarget(*target, select->mutable_target(), render_frame_host,
-                          error_json)) {
+    if (!FillActionTarget(*target, select->mutable_target(), default_tab,
+                          short_document_id_to_identifier, error_json)) {
       return false;
     }
-    select->set_value(*value);
+    select->set_value(value ? *value : *first_value);
     select->set_tab_id(tab_id);
   } else if (kind == "scroll") {
     apc::ScrollAction* scroll = proto_action->mutable_scroll();
     if (const base::DictValue* target = action.FindDict("target")) {
-      if (!FillActionTarget(*target, scroll->mutable_target(),
-                            render_frame_host, error_json)) {
+      if (!FillActionTarget(*target, scroll->mutable_target(), default_tab,
+                            short_document_id_to_identifier, error_json)) {
         return false;
       }
     }
-    const std::string direction =
-        FindStringMember(action, "direction").value_or("down");
+    std::string direction = FindStringMember(action, "direction").value_or("");
+    if (direction.empty()) {
+      const double delta_x = action.FindDouble("deltaX").value_or(0.0);
+      const double delta_y = action.FindDouble("deltaY").value_or(0.0);
+      if (std::abs(delta_x) > std::abs(delta_y)) {
+        direction = delta_x < 0 ? "left" : "right";
+      } else {
+        direction = delta_y < 0 ? "up" : "down";
+      }
+    }
     if (direction == "up") {
       scroll->set_direction(apc::ScrollAction_ScrollDirection_UP);
     } else if (direction == "left") {
@@ -1655,8 +1962,12 @@ bool AppendBuaActionToProto(const base::DictValue& action,
     } else {
       scroll->set_direction(apc::ScrollAction_ScrollDirection_DOWN);
     }
-    scroll->set_distance(
-        static_cast<float>(action.FindDouble("distance").value_or(600.0)));
+    const double distance = action.FindDouble("amount").value_or(
+        action.FindDouble("distance")
+            .value_or(
+                std::max(std::abs(action.FindDouble("deltaX").value_or(0.0)),
+                         std::abs(action.FindDouble("deltaY").value_or(0.0)))));
+    scroll->set_distance(static_cast<float>(distance > 0 ? distance : 600.0));
     scroll->set_tab_id(tab_id);
   } else if (kind == "scroll_to") {
     const base::DictValue* target = RequiredTarget(action, error_json);
@@ -1664,22 +1975,40 @@ bool AppendBuaActionToProto(const base::DictValue& action,
       return false;
     }
     apc::ScrollToAction* scroll_to = proto_action->mutable_scroll_to();
-    if (!FillActionTarget(*target, scroll_to->mutable_target(),
-                          render_frame_host, error_json)) {
+    if (!FillActionTarget(*target, scroll_to->mutable_target(), default_tab,
+                          short_document_id_to_identifier, error_json)) {
       return false;
     }
     scroll_to->set_tab_id(tab_id);
-  } else if (kind == "hover") {
+  } else if (kind == "move_mouse" || kind == "hover") {
     const base::DictValue* target = RequiredTarget(action, error_json);
     if (!target) {
       return false;
     }
     apc::MoveMouseAction* move_mouse = proto_action->mutable_move_mouse();
-    if (!FillActionTarget(*target, move_mouse->mutable_target(),
-                          render_frame_host, error_json)) {
+    if (!FillActionTarget(*target, move_mouse->mutable_target(), default_tab,
+                          short_document_id_to_identifier, error_json)) {
       return false;
     }
     move_mouse->set_tab_id(tab_id);
+  } else if (kind == "drag") {
+    const base::DictValue* from = action.FindDict("from");
+    const base::DictValue* to = action.FindDict("to");
+    if (!from || !to) {
+      *error_json =
+          Error("invalid_request", "drag action requires from and to targets.",
+                "input");
+      return false;
+    }
+    apc::DragAndReleaseAction* drag =
+        proto_action->mutable_drag_and_release();
+    if (!FillActionTarget(*from, drag->mutable_from_target(), default_tab,
+                          short_document_id_to_identifier, error_json) ||
+        !FillActionTarget(*to, drag->mutable_to_target(), default_tab,
+                          short_document_id_to_identifier, error_json)) {
+      return false;
+    }
+    drag->set_tab_id(tab_id);
   } else if (kind == "navigate") {
     const std::string* url_string = action.FindString("url");
     if (!url_string) {
@@ -1707,20 +2036,20 @@ bool AppendBuaActionToProto(const base::DictValue& action,
     } else {
       *error_json = SuccessDict(UnsupportedActionResult(
           action_id, action_index, kind,
-          "history.reload is not supported by BUA actions yet."));
+          "history.reload must run as a standalone history action."));
       return false;
     }
   } else if (kind == "wait") {
     apc::WaitAction* wait = proto_action->mutable_wait();
     int wait_ms = action.FindInt("waitMs").value_or(0);
-    if (const base::DictValue* until = action.FindDict("until")) {
-      if (const std::string* type = until->FindString("type")) {
+    if (const base::DictValue* condition = action.FindDict("condition")) {
+      if (const std::string* type = condition->FindString("type")) {
         if (*type == "time") {
-          wait_ms = until->FindInt("waitMs").value_or(wait_ms);
+          wait_ms = condition->FindInt("ms").value_or(wait_ms);
         } else {
           *error_json = SuccessDict(UnsupportedActionResult(
               action_id, action_index, kind,
-              "wait.until conditions other than time are not wired yet."));
+              "condition waits must run as a standalone wait action."));
           return false;
         }
       }
@@ -1759,7 +2088,7 @@ bool AppendBuaActionToProto(const base::DictValue& action,
     } else {
       *error_json = SuccessDict(UnsupportedActionResult(
           action_id, action_index, kind,
-          "tab create is exposed through targets.createTab in BUA v1."));
+          "Create tabs through the BuaTabs.create() API."));
       return false;
     }
   } else {
@@ -1793,11 +2122,11 @@ base::DictValue BuildTaskState(const std::string& session_id,
 std::string BuaTaskStatus(actor::ActorTask::State state) {
   switch (state) {
     case actor::ActorTask::State::kCreated:
-    case actor::ActorTask::State::kReflecting:
-    case actor::ActorTask::State::kWaitingOnUser:
       return "idle";
+    case actor::ActorTask::State::kReflecting:
     case actor::ActorTask::State::kActing:
-      return "acting";
+      return "running";
+    case actor::ActorTask::State::kWaitingOnUser:
     case actor::ActorTask::State::kPausedByActor:
     case actor::ActorTask::State::kPausedByUser:
       return "paused";
@@ -1820,6 +2149,67 @@ actor::ActorTask::StoppedReason BuaStoppedReason(std::string_view reason) {
     return actor::ActorTask::StoppedReason::kShutdown;
   }
   return actor::ActorTask::StoppedReason::kModelError;
+}
+
+base::DictValue BuildPageSnapshotRequest(const base::DictValue& request,
+                                         bool screenshot_only) {
+  const base::DictValue* input_options = request.FindDict("options");
+
+  base::DictValue channels;
+  channels.Set("content", !screenshot_only);
+  channels.Set(
+      "screenshot",
+      screenshot_only ||
+          (input_options
+               ? input_options->FindBool("includeScreenshot").value_or(false)
+               : false));
+  channels.Set("metadata", true);
+
+  base::DictValue budget;
+  if (input_options) {
+    if (std::optional<int> max_nodes = input_options->FindInt("maxNodes")) {
+      budget.Set("maxNodes", *max_nodes);
+    }
+  }
+
+  base::DictValue options;
+  if (input_options) {
+    if (const std::string* purpose = input_options->FindString("purpose")) {
+      options.Set("purpose", *purpose);
+    }
+  }
+  options.Set("channels", std::move(channels));
+  options.Set("budget", std::move(budget));
+
+  base::DictValue snapshot_request;
+  if (const std::string* session_id = request.FindString("sessionId")) {
+    snapshot_request.Set("sessionId", *session_id);
+  }
+  snapshot_request.Set("options", std::move(options));
+  return snapshot_request;
+}
+
+base::DictValue BuildNavigateActRequest(const base::DictValue& request) {
+  base::DictValue action;
+  action.Set("kind", "navigate");
+  if (const std::string* url = request.FindString("url")) {
+    action.Set("url", *url);
+  }
+
+  base::ListValue actions;
+  actions.Append(std::move(action));
+
+  base::DictValue options;
+  options.Set("snapshotAfter", "auto");
+  options.Set("stopOnFirstError", true);
+
+  base::DictValue act_request;
+  if (const std::string* session_id = request.FindString("sessionId")) {
+    act_request.Set("sessionId", *session_id);
+  }
+  act_request.Set("actions", std::move(actions));
+  act_request.Set("options", std::move(options));
+  return act_request;
 }
 
 glic::mojom::GetTabContextOptions BuildSnapshotOptions(
@@ -2059,7 +2449,311 @@ void BuaDocumentService::OnSnapshot(
   std::move(callback).Run(SuccessDict(BuildSnapshotFromTabContext(
       std::move(snapshot_id), std::move(snapshot_mode), generation,
       *result.value()->get_tab_context(), /*web_contents=*/nullptr,
-      max_nodes)));
+      max_nodes, &document_identifier_to_short_id_,
+      &short_document_id_to_identifier_, &next_short_document_id_)));
+}
+
+void BuaDocumentService::HandleWaitAction(const base::DictValue& action,
+                                          RequestCallback callback) {
+  std::string error_json;
+  std::optional<BuaWaitSpec> spec =
+      ParseWaitSpec(action, /*action_index=*/0, &error_json);
+  if (!spec) {
+    std::move(callback).Run(std::move(error_json));
+    return;
+  }
+
+  const base::TimeTicks start_time = base::TimeTicks::Now();
+  if (spec->type == "time") {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](base::WeakPtr<BuaDocumentService> service,
+               RequestCallback callback, BuaWaitSpec spec,
+               base::TimeTicks start_time) {
+              if (!service) {
+                return;
+              }
+              std::move(callback).Run(SuccessDict(
+                  BuildWaitActionResult(spec, start_time, /*ok=*/true,
+                                        "Wait time elapsed.", std::nullopt)));
+            },
+            weak_ptr_factory_.GetWeakPtr(), std::move(callback),
+            std::move(*spec), start_time),
+        spec->delay);
+    return;
+  }
+
+  const base::TimeTicks deadline = start_time + spec->timeout;
+  PollWaitCondition(std::move(*spec), std::move(callback), start_time, deadline,
+                    base::TimeTicks());
+}
+
+void BuaDocumentService::HandleReloadAction(const base::DictValue& action,
+                                            tabs::TabInterface* default_tab,
+                                            RequestCallback callback) {
+  content::BrowserContext* browser_context =
+      render_frame_host().GetBrowserContext();
+  tabs::TabInterface* tab = default_tab;
+  std::string error_json;
+  if (const base::DictValue* target_ref = action.FindDict("targetRef")) {
+    tab =
+        ResolveTargetRef(*target_ref, default_tab, browser_context, &error_json);
+  }
+  if (!tab) {
+    std::move(callback).Run(
+        error_json.empty() ? NoDefaultTargetError(browser_context, "reload")
+                           : std::move(error_json));
+    return;
+  }
+
+  content::WebContents* contents = tab->GetContents();
+  if (!contents) {
+    std::move(callback).Run(
+        Error("target_not_found",
+              "reload requires a live WebContents for the selected tab.",
+              "target_not_found"));
+    return;
+  }
+
+  const bool ignore_cache = action.FindBool("ignoreCache").value_or(false);
+  const base::TimeTicks start_time = base::TimeTicks::Now();
+  contents->GetController().Reload(
+      ignore_cache ? content::ReloadType::BYPASSING_CACHE
+                   : content::ReloadType::NORMAL,
+      /*check_for_repost=*/true);
+  std::move(callback).Run(SuccessDict(
+      BuildReloadActionResult(action, tab, start_time, ignore_cache)));
+}
+
+void BuaDocumentService::HandleMiddleClickAction(
+    const base::DictValue& action,
+    tabs::TabInterface* default_tab,
+    RequestCallback callback) {
+  std::string error_json;
+  std::optional<gfx::PointF> point =
+      ReadMiddleClickPoint(action, &error_json);
+  if (!point) {
+    std::move(callback).Run(std::move(error_json));
+    return;
+  }
+
+  const std::string button =
+      FindStringMember(action, "button").value_or("left");
+  if (button != "middle") {
+    std::move(callback).Run(
+        Error("invalid_request",
+              "HandleMiddleClickAction requires button=middle.", "input"));
+    return;
+  }
+
+  content::BrowserContext* browser_context =
+      render_frame_host().GetBrowserContext();
+  tabs::TabInterface* tab = default_tab;
+  if (const base::DictValue* target_ref = action.FindDict("targetRef")) {
+    tab =
+        ResolveTargetRef(*target_ref, default_tab, browser_context, &error_json);
+  }
+  if (!tab) {
+    std::move(callback).Run(
+        error_json.empty() ? NoDefaultTargetError(browser_context,
+                                                  "middle click")
+                           : std::move(error_json));
+    return;
+  }
+
+  content::WebContents* contents = tab->GetContents();
+  if (!contents || !contents->GetPrimaryMainFrame()) {
+    std::move(callback).Run(Error(
+        "target_not_found",
+        "middle click requires a live WebContents for the selected tab.",
+        "target_not_found"));
+    return;
+  }
+
+  content::RenderWidgetHost* render_widget_host =
+      contents->GetPrimaryMainFrame()->GetRenderWidgetHost();
+  if (!render_widget_host) {
+    std::move(callback).Run(Error(
+        "target_not_found",
+        "middle click requires a live render widget for the selected tab.",
+        "target_not_found"));
+    return;
+  }
+
+  const int requested_click_count = action.FindInt("clickCount").value_or(
+      action.FindInt("count").value_or(1));
+  if (requested_click_count < 1) {
+    std::move(callback).Run(Error("invalid_request",
+                                  "clickCount must be greater than zero.",
+                                  "input"));
+    return;
+  }
+  const int click_count = requested_click_count == 2 ? 2 : 1;
+
+  const base::TimeTicks start_time = base::TimeTicks::Now();
+  render_widget_host->Focus();
+  ForwardMiddleClick(render_widget_host, *point, click_count);
+  std::move(callback).Run(SuccessDict(
+      BuildMiddleClickActionResult(action, tab, start_time, *point,
+                                   click_count)));
+}
+
+void BuaDocumentService::PollWaitCondition(BuaWaitSpec spec,
+                                           RequestCallback callback,
+                                           base::TimeTicks start_time,
+                                           base::TimeTicks deadline,
+                                           base::TimeTicks stable_since) {
+  const base::TimeTicks now = base::TimeTicks::Now();
+  if (now >= deadline) {
+    std::move(callback).Run(SuccessDict(
+        BuildWaitActionResult(spec, start_time, /*ok=*/false,
+                              "Wait condition timed out.", std::nullopt)));
+    return;
+  }
+
+  content::BrowserContext* browser_context =
+      render_frame_host().GetBrowserContext();
+  tabs::TabInterface* tab = GetDefaultTargetTab();
+  std::string error_json;
+  if (spec.target_ref) {
+    tab = ResolveTargetRef(*spec.target_ref, tab, browser_context, &error_json);
+  }
+  if (!tab) {
+    std::move(callback).Run(error_json.empty()
+                                ? NoDefaultTargetError(browser_context, "wait")
+                                : std::move(error_json));
+    return;
+  }
+
+  if (spec.type == "url_matches") {
+    if (UrlMatchesPattern(tab->GetURL().spec(), spec.pattern)) {
+      std::move(callback).Run(SuccessDict(
+          BuildWaitActionResult(spec, start_time, /*ok=*/true,
+                                "URL matched wait pattern.", std::nullopt)));
+      return;
+    }
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&BuaDocumentService::PollWaitCondition,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(spec),
+                       std::move(callback), start_time, deadline,
+                       base::TimeTicks()),
+        base::Milliseconds(kWaitPollIntervalMs));
+    return;
+  }
+
+  if (spec.type == "page_stable") {
+    content::WebContents* contents = tab->GetContents();
+    const bool is_stable = contents && !contents->IsLoading();
+    base::TimeTicks next_stable_since = stable_since;
+    if (is_stable && stable_since.is_null()) {
+      next_stable_since = now;
+    } else if (!is_stable) {
+      next_stable_since = base::TimeTicks();
+    }
+    if (is_stable && !next_stable_since.is_null() &&
+        now - next_stable_since >= spec.stable_for) {
+      std::move(callback).Run(SuccessDict(
+          BuildWaitActionResult(spec, start_time, /*ok=*/true,
+                                "Page remained stable.", std::nullopt)));
+      return;
+    }
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&BuaDocumentService::PollWaitCondition,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(spec),
+                       std::move(callback), start_time, deadline,
+                       next_stable_since),
+        base::Milliseconds(kWaitPollIntervalMs));
+    return;
+  }
+
+  base::DictValue snapshot_request;
+  base::DictValue options;
+  options.Set("mode", "interact");
+  base::DictValue channels;
+  channels.Set("content", true);
+  channels.Set("screenshot", false);
+  channels.Set("pdf", false);
+  options.Set("channels", std::move(channels));
+  base::DictValue budget;
+  budget.Set("maxNodes", kDefaultMaxNodes);
+  budget.Set("maxTextBytes", kDefaultInnerTextBytesLimit);
+  options.Set("budget", std::move(budget));
+  snapshot_request.Set("options", std::move(options));
+
+  glic::FetchPageContext(
+      tab, BuildSnapshotOptions(snapshot_request),
+      base::BindOnce(&BuaDocumentService::OnWaitSnapshot,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(spec),
+                     std::move(callback), start_time, deadline, stable_since),
+      /*progress_listener=*/nullptr,
+      /*is_screenshot_annotated=*/false);
+}
+
+void BuaDocumentService::OnWaitSnapshot(
+    BuaWaitSpec spec,
+    RequestCallback callback,
+    base::TimeTicks start_time,
+    base::TimeTicks deadline,
+    base::TimeTicks stable_since,
+    base::expected<glic::mojom::GetContextResultPtr,
+                   page_content_annotations::FetchPageContextErrorDetails>
+        result) {
+  if (!result.has_value()) {
+    std::move(callback).Run(
+        Error("snapshot_failed", result.error().message, "backend_error"));
+    return;
+  }
+
+  if (!result.value()->is_tab_context()) {
+    std::move(callback).Run(Error("snapshot_failed",
+                                  result.value()->is_error_reason()
+                                      ? result.value()->get_error_reason()
+                                      : "BUA wait snapshot backend did not "
+                                        "return page context.",
+                                  "backend_error"));
+    return;
+  }
+
+  base::DictValue snapshot = BuildSnapshotFromTabContext(
+      std::string("wait-snapshot-") + base::NumberToString(NowMs()), "interact",
+      ++snapshot_generation_, *result.value()->get_tab_context(),
+      /*web_contents=*/nullptr, kDefaultMaxNodes,
+      &document_identifier_to_short_id_, &short_document_id_to_identifier_,
+      &next_short_document_id_);
+
+  bool satisfied = false;
+  if (spec.type == "text_present") {
+    satisfied = ContainsSensitive(SnapshotInnerText(snapshot), spec.text);
+  } else if ((spec.type == "element_present" ||
+              spec.type == "element_absent") &&
+             spec.target) {
+    const bool present = SnapshotHasTarget(snapshot, *spec.target);
+    satisfied = spec.expect_absent ? !present : present;
+  }
+
+  if (satisfied) {
+    std::move(callback).Run(SuccessDict(BuildWaitActionResult(
+        spec, start_time, /*ok=*/true, "Wait condition was satisfied.",
+        std::move(snapshot))));
+    return;
+  }
+
+  if (base::TimeTicks::Now() >= deadline) {
+    std::move(callback).Run(SuccessDict(BuildWaitActionResult(
+        spec, start_time, /*ok=*/false, "Wait condition timed out.",
+        std::move(snapshot))));
+    return;
+  }
+
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&BuaDocumentService::PollWaitCondition,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(spec),
+                     std::move(callback), start_time, deadline, stable_since),
+      base::Milliseconds(kWaitPollIntervalMs));
 }
 
 void BuaDocumentService::HandleAct(const base::DictValue& request,
@@ -2080,6 +2774,29 @@ void BuaDocumentService::HandleAct(const base::DictValue& request,
     std::move(callback).Run(Error(
         "invalid_request", "act requires a non-empty actions list.", "input"));
     return;
+  }
+
+  if (actions->size() == 1) {
+    const base::DictValue* action = (*actions)[0].GetIfDict();
+    if (!action) {
+      std::move(callback).Run(
+          Error("invalid_request", "Each action must be an object.", "input"));
+      return;
+    }
+    if (FindStringMember(*action, "kind").value_or("") == "wait") {
+      HandleWaitAction(*action, std::move(callback));
+      return;
+    }
+    if (FindStringMember(*action, "kind").value_or("") == "history" &&
+        FindStringMember(*action, "direction").value_or("") == "reload") {
+      HandleReloadAction(*action, tab, std::move(callback));
+      return;
+    }
+    if (FindStringMember(*action, "kind").value_or("") == "click" &&
+        FindStringMember(*action, "button").value_or("left") == "middle") {
+      HandleMiddleClickAction(*action, tab, std::move(callback));
+      return;
+    }
   }
 
   if (!tab && actions->size() == 1) {
@@ -2133,6 +2850,7 @@ void BuaDocumentService::HandleAct(const base::DictValue& request,
       return;
     }
     if (!AppendBuaActionToProto(*action, action_index, tab, browser_context,
+                                short_document_id_to_identifier_,
                                 render_frame_host(), &actions_proto,
                                 &action_ids, &error_json)) {
       std::move(callback).Run(std::move(error_json));
@@ -2198,12 +2916,7 @@ void BuaDocumentService::Request(const std::string& method,
   content::BrowserContext* browser_context =
       render_frame_host().GetBrowserContext();
   tabs::TabInterface* tab = GetDefaultTargetTab();
-  glic::GlicKeyedService* glic_service = GetGlicService();
   actor::ActorKeyedService* actor_service = GetActorService();
-  const bool has_policy_checker =
-      glic_service && glic_service->HasActorPolicyChecker();
-  const bool can_act_on_web =
-      has_policy_checker && glic_service->actor_policy_checker().CanActOnWeb();
 
   if (method == "capabilities") {
     std::move(callback).Run(SuccessDict(BuildCapabilities()));
@@ -2226,24 +2939,37 @@ void BuaDocumentService::Request(const std::string& method,
     return;
   }
 
-  if (method == "availability.current") {
-    std::move(callback).Run(
-        SuccessDict(BuildAvailability(!!tab, !!glic_service, !!actor_service,
-                                      has_policy_checker, can_act_on_web)));
+  if (method == "page.snapshot") {
+    base::DictValue snapshot_request =
+        BuildPageSnapshotRequest(*request, /*screenshot_only=*/false);
+    HandleSnapshot(snapshot_request, std::move(callback));
     return;
   }
 
-  if (method == "snapshot") {
-    HandleSnapshot(*request, std::move(callback));
+  if (method == "page.screenshot") {
+    base::DictValue screenshot_request =
+        BuildPageSnapshotRequest(*request, /*screenshot_only=*/true);
+    HandleSnapshot(screenshot_request, std::move(callback));
     return;
   }
 
-  if (method == "act") {
+  if (method == "page.act") {
     HandleAct(*request, std::move(callback));
     return;
   }
 
-  if (method == "targets.current") {
+  if (method == "page.navigate") {
+    if (!request->FindString("url")) {
+      std::move(callback).Run(
+          Error("invalid_request", "page.navigate requires url.", "input"));
+      return;
+    }
+    base::DictValue act_request = BuildNavigateActRequest(*request);
+    HandleAct(act_request, std::move(callback));
+    return;
+  }
+
+  if (method == "tabs.current") {
     if (tab) {
       std::move(callback).Run(SuccessDict(BuildTargetSnapshotFromTab(tab)));
     } else if (HasBrowserForProfile(browser_context)) {
@@ -2259,7 +2985,7 @@ void BuaDocumentService::Request(const std::string& method,
     return;
   }
 
-  if (method == "targets.list") {
+  if (method == "tabs.list") {
     const base::DictValue* options = request->FindDict("options");
     std::optional<int32_t> window_id;
     if (const std::string* window_id_string =
@@ -2279,7 +3005,7 @@ void BuaDocumentService::Request(const std::string& method,
     return;
   }
 
-  if (method == "targets.createTab") {
+  if (method == "tabs.create") {
     const base::DictValue* options = request->FindDict("options");
     const std::string* url_string =
         options ? options->FindString("url") : nullptr;
@@ -2287,14 +3013,14 @@ void BuaDocumentService::Request(const std::string& method,
     if (!IsCreateTabUrlAllowed(url)) {
       std::move(callback).Run(
           Error("invalid_request",
-                "targets.createTab only accepts valid HTTP(S) URLs or "
+                "tabs.create only accepts valid HTTP(S) URLs or "
                 "about:blank.",
                 "input"));
       return;
     }
 
     const bool background =
-        options ? options->FindBool("background").value_or(false) : false;
+        options ? !options->FindBool("activate").value_or(true) : false;
     std::optional<int32_t> window_id;
     if (const std::string* window_id_string =
             options ? options->FindString("windowId") : nullptr) {
@@ -2317,22 +3043,24 @@ void BuaDocumentService::Request(const std::string& method,
     return;
   }
 
-  if (method == "targets.activate" || method == "targets.close") {
-    const base::DictValue* target = request->FindDict("target");
-    if (!target) {
+  if (method == "tabs.activate" || method == "tabs.close") {
+    const std::string* tab_id = request->FindString("tabId");
+    if (!tab_id) {
       std::move(callback).Run(
-          Error("invalid_request", "target is required.", "input"));
+          Error("invalid_request", "tabId is required.", "input"));
       return;
     }
 
+    base::DictValue target;
+    target.Set("tabId", *tab_id);
     std::string error_json;
     tabs::TabInterface* target_tab =
-        ResolveTargetRef(*target, tab, browser_context, &error_json);
+        ResolveTargetRef(target, tab, browser_context, &error_json);
     if (!target_tab) {
       std::move(callback).Run(std::move(error_json));
       return;
     }
-    if (method == "targets.activate") {
+    if (method == "tabs.activate") {
       BrowserWindowInterface* browser = target_tab->GetBrowserWindowInterface();
       TabListInterface* tab_list =
           browser ? TabListInterface::From(browser) : nullptr;
@@ -2343,22 +3071,20 @@ void BuaDocumentService::Request(const std::string& method,
         return;
       }
       tab_list->ActivateTab(target_tab->GetHandle());
+      std::move(callback).Run(
+          SuccessDict(BuildTargetSnapshotFromTab(target_tab)));
     } else {
       target_tab->Close();
+      std::move(callback).Run(Success(base::Value(true)));
     }
-    std::move(callback).Run(SuccessDict(base::DictValue()));
     return;
   }
 
   if (method == "task.start") {
-    std::string error_json;
-    std::optional<actor::TaskId> task_id = EnsureActorTask(&error_json);
-    if (!task_id) {
-      std::move(callback).Run(std::move(error_json));
-      return;
-    }
-    std::move(callback).Run(
-        SuccessDict(BuildTaskState(session_id_, true, "idle")));
+    task_status_ = "running";
+    task_reason_.clear();
+    std::move(callback).Run(SuccessDict(
+        BuildTaskState(session_id_, actor_task_id_.has_value(), task_status_)));
     return;
   }
 
@@ -2368,7 +3094,60 @@ void BuaDocumentService::Request(const std::string& method,
                                  : nullptr;
     std::move(callback).Run(SuccessDict(BuildTaskState(
         session_id_, task != nullptr,
-        task ? BuaTaskStatus(task->GetState()) : "idle")));
+        task ? BuaTaskStatus(task->GetState()) : task_status_, task_reason_)));
+    return;
+  }
+
+  if (method == "task.pause") {
+    const std::string* requested_reason = request->FindString("reason");
+    task_reason_ = requested_reason ? *requested_reason : "user_takeover";
+    task_status_ = "paused";
+    actor::ActorTask* task = actor_task_id_ && actor_service
+                                 ? actor_service->GetTask(*actor_task_id_)
+                                 : nullptr;
+    if (task) {
+      task->Pause(/*from_actor=*/false);
+      task_status_ = BuaTaskStatus(task->GetState());
+    }
+    std::move(callback).Run(SuccessDict(BuildTaskState(
+        session_id_, task != nullptr, task_status_, task_reason_)));
+    return;
+  }
+
+  if (method == "task.resume") {
+    task_reason_.clear();
+    task_status_ = "running";
+    actor::ActorTask* task = actor_task_id_ && actor_service
+                                 ? actor_service->GetTask(*actor_task_id_)
+                                 : nullptr;
+    if (task) {
+      task->Resume();
+      task_status_ = BuaTaskStatus(task->GetState());
+    }
+    base::DictValue result;
+    result.Set("state", BuildTaskState(session_id_, task != nullptr,
+                                       task_status_, task_reason_));
+    std::move(callback).Run(SuccessDict(std::move(result)));
+    return;
+  }
+
+  if (method == "task.cancelActions") {
+    const std::string* requested_reason = request->FindString("reason");
+    actor::ActorTask* task = actor_task_id_ && actor_service
+                                 ? actor_service->GetTask(*actor_task_id_)
+                                 : nullptr;
+    bool cancelled = false;
+    if (task) {
+      cancelled = task->CancelOngoingActions(
+          actor::mojom::ActionResultCode::kActionsCancelled);
+      task_status_ = BuaTaskStatus(task->GetState());
+    }
+    base::DictValue result;
+    result.Set("status", cancelled ? "cancelled" : "nothing_to_cancel");
+    if (requested_reason && !requested_reason->empty()) {
+      result.Set("reason", *requested_reason);
+    }
+    std::move(callback).Run(SuccessDict(std::move(result)));
     return;
   }
 
@@ -2378,6 +3157,8 @@ void BuaDocumentService::Request(const std::string& method,
                                    ? "session_closed"
                                    : (requested_reason ? *requested_reason
                                                        : "completed");
+    task_status_ = "stopped";
+    task_reason_ = reason;
     StopActorTask(BuaStoppedReason(reason));
     if (method == "task.stop") {
       base::DictValue result;
@@ -2388,35 +3169,6 @@ void BuaDocumentService::Request(const std::string& method,
     } else {
       std::move(callback).Run(SuccessDict(base::DictValue()));
     }
-    return;
-  }
-
-  if (method == "requests.next") {
-    std::move(callback).Run(Success(base::Value()));
-    return;
-  }
-
-  if (method == "requests.respond") {
-    std::move(callback).Run(SuccessDict(base::DictValue()));
-    return;
-  }
-
-  if (method == "diagnostics.current") {
-    base::ListValue diagnostics;
-    base::DictValue diagnostic;
-    diagnostic.Set("severity", "info");
-    diagnostic.Set("category", "adapter");
-    diagnostic.Set(
-        "message",
-        "BUA native bridge is active. Targets are resolved through Chrome's "
-        "tab model; snapshot() returns BuaPageSnapshot; act() uses the BUA "
-        "actuation backend when available.");
-    diagnostic.Set("hasSnapshotBackend", !!glic_service);
-    diagnostic.Set("hasActuationBackend", !!actor_service);
-    diagnostic.Set("hasActuationPolicy", has_policy_checker);
-    diagnostic.Set("canActOnWeb", can_act_on_web);
-    diagnostics.Append(std::move(diagnostic));
-    std::move(callback).Run(Success(base::Value(std::move(diagnostics))));
     return;
   }
 

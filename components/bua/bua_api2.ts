@@ -219,9 +219,10 @@ export interface BuaScreenshot {
 }
 
 export type BuaElementTarget =
+    // Prefer `nodeId` returned by snapshot(); use `point` only as a coordinate
+    // fallback. Local Chromium also accepts "viewport" for the root scroller in
+    // scroll actions.
     {readonly nodeId: BuaId}|
-    {readonly selector: string}|
-    {readonly text: string}|
     {readonly point: BuaPoint};
 
 export type BuaAction =
@@ -244,7 +245,7 @@ export interface BuaHistoryAction extends BuaBaseAction {
 export interface BuaClickAction extends BuaBaseAction {
   readonly kind: 'click';
   readonly target: BuaElementTarget;
-  readonly button?: 'left'|'middle'|'right';
+  readonly button?: 'left'|'right';
   readonly clickCount?: number;
 }
 
@@ -258,6 +259,7 @@ export interface BuaTypeAction extends BuaBaseAction {
 
 export interface BuaScrollAction extends BuaBaseAction {
   readonly kind: 'scroll';
+  // Required so runtimes can disambiguate nested scrollable regions.
   readonly target: BuaElementTarget;
   readonly deltaX?: number;
   readonly deltaY?: number;
@@ -298,7 +300,8 @@ export type BuaWaitCondition =
     {readonly type: 'page_stable'; readonly stableForMs?: number}|
     {readonly type: 'url_matches'; readonly pattern: string}|
     {readonly type: 'text_present'; readonly text: string}|
-    {readonly type: 'element_present'; readonly target: BuaElementTarget};
+    {readonly type: 'element_present'; readonly target: BuaElementTarget}|
+    {readonly type: 'element_absent'; readonly target: BuaElementTarget};
 
 export interface BuaActOptions {
   readonly timeoutMs?: number;
